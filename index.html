@@ -1,0 +1,3289 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cổng quản lý cuộc thi học sinh — Trường THCS</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <!-- React & ReactDOM 18 -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel Standalone để biên dịch JSX trực tiếp trên trình duyệt -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- PDF.js để đọc nội dung tệp PDF thể lệ / thông báo tải lên -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Firebase Compat SDK v11 (Lưu dữ liệu Firestore & Auth khi đưa lên GitHub/Vercel/Netlify) -->
+  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // Cấu hình PDF.js Worker
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+
+    // =========================================================================
+    // 1. CẤU HÌNH FIREBASE & GEMINI API (ĐỂ CHẠY WEB THẬT TRÊN GITHUB/VERCEL)
+    // =========================================================================
+    const FIREBASE_CONFIG = {
+      apiKey: "",
+      authDomain: "",
+      projectId: "",
+      storageBucket: "",
+      messagingSenderId: "",
+      appId: ""
+    };
+
+    const DEFAULT_GEMINI_API_KEY = "";
+
+    const resolvedFirebaseConfig =
+      typeof __firebase_config !== "undefined"
+        ? JSON.parse(__firebase_config)
+        : FIREBASE_CONFIG.apiKey
+          ? FIREBASE_CONFIG
+          : null;
+
+    const APP_ID = typeof __app_id !== "undefined" ? __app_id : "thcs-contest-portal-web";
+
+    let db = null;
+    let auth = null;
+    if (resolvedFirebaseConfig && window.firebase) {
+      try {
+        const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(resolvedFirebaseConfig);
+        auth = firebase.auth();
+        db = firebase.firestore();
+      } catch (e) {
+        console.error("Lỗi khởi tạo Firebase:", e);
+      }
+    }
+
+    // =========================================================================
+    // 2. DỮ LIỆU MẪU CHUẨN TRƯỜNG THCS
+    // =========================================================================
+    const INITIAL_SCHOOL_CONFIG = {
+      schoolName: "Trường THCS Thành Vinh 1",
+      logoText: "TV1",
+      academicYear: "2026–2027",
+      grades: ["6", "7", "8", "9"],
+      contactPerson: "Phụ trách kỹ thuật",
+      contactPhone: "0989473535",
+      scoringRules: { "Nhất": 10, "Nhì": 7, "Ba": 5, "Khuyến khích": 3 },
+      teamScoringMode: "SPLIT_EVENLY"
+    };
+
+    const INITIAL_CLASSES = [
+      { id: "cls_6A", name: "6A", grade: "6", studentCount: 40, homeroomTeacher: "Cô Nguyễn Thị Lan" },
+      { id: "cls_7A", name: "7A", grade: "7", studentCount: 42, homeroomTeacher: "Thầy Trần Văn Minh" },
+      { id: "cls_8A", name: "8A", grade: "8", studentCount: 40, homeroomTeacher: "Cô Lê Thu Hà" },
+      { id: "cls_8B", name: "8B", grade: "8", studentCount: 38, homeroomTeacher: "Thầy Phạm Quốc Bảo" },
+      { id: "cls_9A", name: "9A", grade: "9", studentCount: 44, homeroomTeacher: "Cô Hoàng Mai Anh" }
+    ];
+
+    const INITIAL_CONTESTS = [
+      {
+        id: "contest_tht",
+        title: "Hội thi Tin học trẻ cấp Trường & Thành phố",
+        academicYear: "2026–2027",
+        organizer: "Phòng GD&ĐT phối hợp Thành Đoàn",
+        level: "Cấp Thành phố",
+        field: "Tin học & Lập trình",
+        grades: ["6", "7", "8", "9"],
+        format: "Cá nhân & Đội (tối đa 2 HS liên lớp)",
+        publishStatus: "PUBLISHED",
+        workflowStatus: "OPEN_REGISTRATION",
+        registrationEnd: "2026-12-05",
+        schoolInternalDeadline: "2026-12-02",
+        reportDeadline: "2026-11-25",
+        reportSubmitted: false,
+        thoiHan: "Hạn đăng ký: 05/12/2026 · Thi sơ loại: 15/12/2026",
+        location: "Phòng Tin học 1 & 2 - Trường THCS Thành Vinh 1",
+        contactInfo: "Phụ trách kỹ thuật - SĐT: 0989473535",
+        description: "Sân chơi lập trình Scratch, Python và sản phẩm phần mềm sáng tạo dành cho học sinh THCS.",
+        studentArticle: "Mở đăng ký Hội thi Tin học trẻ năm học 2026–2027.\n- Hạn của trường: Trước 17h00 ngày 02/12/2026.\n- Hạn của ban tổ chức: 05/12/2026.\n- Liên hệ hỗ trợ: Phụ trách kỹ thuật (0989473535).",
+        pdfRule: {
+          version: "v1.0",
+          fileName: "The_le_Tin_hoc_tre_2026_2027.pdf",
+          updatedAt: "2026-11-01",
+          summaryPages: [
+            "Trang 1: Đối tượng dự thi là học sinh THCS khối 6, 7, 8, 9.",
+            "Trang 2: Bảng B thi lập trình cá nhân; Bảng D2 thi sản phẩm sáng tạo theo đội tối đa 2 thành viên liên lớp.",
+            "Trang 3: Hạn đăng ký BTC 05/12/2026; Sơ loại 15/12/2026; Chung kết 10/01/2027."
+          ]
+        },
+        rounds: [
+          { id: "r_tht_1", name: "Vòng Sơ loại cấp Trường", date: "2026-12-15", time: "08:00 - 10:30", location: "Phòng Máy tính 1 & 2", pic: "Phụ trách kỹ thuật (0989473535)" },
+          { id: "r_tht_2", name: "Vòng Chung kết", date: "2027-01-10", time: "07:30 - 11:30", location: "Hội trường tầng 3", pic: "Phụ trách kỹ thuật (0989473535)" }
+        ]
+      },
+      {
+        id: "contest_khkt",
+        title: "Cuộc thi Khoa học Kỹ thuật (KHKT) học sinh trung học",
+        academicYear: "2026–2027",
+        organizer: "Sở Giáo dục và Đào tạo",
+        level: "Cấp Tỉnh",
+        field: "Khoa học & Kỹ thuật",
+        grades: ["8", "9"],
+        format: "Cá nhân hoặc Đội (tối đa 2 thành viên)",
+        publishStatus: "PUBLISHED",
+        workflowStatus: "IN_PROGRESS",
+        registrationEnd: "2026-10-25",
+        schoolInternalDeadline: "2026-10-20",
+        reportDeadline: "2026-11-26",
+        reportSubmitted: false,
+        thoiHan: "Đang thi Vòng 2 · Bảo vệ Poster: 28/11/2026",
+        location: "Nhà đa năng - Trường THCS Thành Vinh 1",
+        contactInfo: "Phụ trách kỹ thuật - SĐT: 0989473535",
+        description: "Nghiên cứu khoa học, sáng tạo kỹ thuật vận dụng kiến thức giải quyết vấn đề thực tiễn.",
+        studentArticle: "Các nhóm dự án chuẩn bị Poster kích thước 90x120cm cho Vòng 2 ngày 28/11/2026.",
+        pdfRule: {
+          version: "v1.0",
+          fileName: "The_le_KHKT_2026_2027.pdf",
+          updatedAt: "2026-10-01",
+          summaryPages: [
+            "Trang 1: Lĩnh vực hệ thống nhúng, môi trường, cơ khí.",
+            "Trang 2: Quy định thuyết minh và gian trưng bày Poster."
+          ]
+        },
+        rounds: [
+          { id: "r_khkt_2", name: "Vòng 2: Trưng bày Poster & Phỏng vấn", date: "2026-11-28", time: "08:00 - 11:30", location: "Nhà đa năng", pic: "Phụ trách kỹ thuật (0989473535)" }
+        ]
+      },
+      {
+        id: "contest_ioe",
+        title: "Olympic Tiếng Anh trên Internet (IOE) cấp Trường",
+        academicYear: "2026–2027",
+        organizer: "Trường THCS Thành Vinh 1",
+        level: "Cấp Trường",
+        field: "Ngoại ngữ",
+        grades: ["6", "7", "8", "9"],
+        format: "Cá nhân",
+        publishStatus: "PUBLISHED",
+        workflowStatus: "RESULTS_PUBLISHED",
+        registrationEnd: "2026-10-10",
+        schoolInternalDeadline: "2026-10-08",
+        reportDeadline: "2026-11-05",
+        reportSubmitted: true,
+        thoiHan: "Đã công bố kết quả chính thức",
+        location: "Phòng Ngoại ngữ & Tin học",
+        contactInfo: "Phụ trách kỹ thuật - SĐT: 0989473535",
+        description: "Cuộc thi Olympic Tiếng Anh trực tuyến dành cho học sinh toàn trường.",
+        studentArticle: "Chúc mừng các học sinh đạt giải IOE cấp Trường đã được vinh danh trên Bảng vàng.",
+        pdfRule: {
+          version: "v1.0",
+          fileName: "The_le_IOE_cap_truong.pdf",
+          updatedAt: "2026-09-10",
+          summaryPages: ["Trang 1: Điều kiện hoàn thành 15 vòng tự luyện.", "Trang 2: Quy chế phòng thi."]
+        },
+        rounds: [
+          { id: "r_ioe_1", name: "Vòng Thi chính thức cấp Trường", date: "2026-10-25", time: "08:00 - 09:00", location: "Phòng Máy tính 1, 2, 3", pic: "Phụ trách kỹ thuật (0989473535)" }
+        ]
+      }
+    ];
+
+    const INITIAL_REGISTRATIONS = [
+      { id: "reg_01", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_01", fullName: "Nguyễn Minh Khôi", className: "8A", grade: "8", dob: "2013-04-12", phone: "0912345671" }], status: "ATTENDED", note: "Bảng thi khối 8", createdAt: "2026-10-05" },
+      { id: "reg_02", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_03", fullName: "Lê Hoàng Nam", className: "8B", grade: "8", dob: "2013-02-15", phone: "0912345672" }], status: "ATTENDED", note: "", createdAt: "2026-10-05" },
+      { id: "reg_03", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_05", fullName: "Vũ Đức Anh", className: "9A", grade: "9", dob: "2012-06-19", phone: "0912345673" }], status: "ATTENDED", note: "", createdAt: "2026-10-06" },
+      { id: "reg_04", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_07", fullName: "Bùi Tuấn Kiệt", className: "7A", grade: "7", dob: "2014-01-30", phone: "0912345674" }], status: "ATTENDED", note: "", createdAt: "2026-10-06" },
+      { id: "reg_05", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_08", fullName: "Ngô Quang Huy", className: "6A", grade: "6", dob: "2015-03-08", phone: "0912345675" }], status: "ATTENDED", note: "", createdAt: "2026-10-07" },
+      { id: "reg_06", contestId: "contest_ioe", type: "TEAM", teamName: "Đội Song Ngữ 8AB", members: [{ studentId: "st_02", fullName: "Trần Bảo Ngọc", className: "8A", grade: "8" }, { studentId: "st_04", fullName: "Phạm Gia Hân", className: "8B", grade: "8" }], status: "ATTENDED", note: "Đội liên lớp 8A-8B", createdAt: "2026-10-07" },
+      { id: "reg_07", contestId: "contest_tht", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_01", fullName: "Nguyễn Minh Khôi", className: "8A", grade: "8", dob: "2013-04-12", phone: "0912345671" }], status: "APPROVED", note: "Bảng B lập trình Python", createdAt: "2026-11-10" },
+      { id: "reg_08", contestId: "contest_tht", type: "TEAM", teamName: "Đội Sáng Tạo Trẻ 8A-8B", members: [{ studentId: "st_01", fullName: "Nguyễn Minh Khôi", className: "8A", grade: "8" }, { studentId: "st_03", fullName: "Lê Hoàng Nam", className: "8B", grade: "8" }], status: "PENDING", note: "Phần mềm học Toán trực quan", createdAt: "2026-11-12" },
+      { id: "reg_09", contestId: "contest_khkt", type: "TEAM", teamName: "Nhóm Robot Xanh", members: [{ studentId: "st_05", fullName: "Vũ Đức Anh", className: "9A", grade: "9" }, { studentId: "st_06", fullName: "Đặng Khánh Linh", className: "9A", grade: "9" }], status: "ATTENDED", note: "Mô hình phân loại rác thông minh", createdAt: "2026-10-18" }
+    ];
+
+    const INITIAL_RESULTS = [
+      { id: "res_01", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_01", fullName: "Nguyễn Minh Khôi", className: "8A", grade: "8", photoUrl: "" }], score: 1920, prize: "Nhất", notes: "Thủ khoa khối 8", isPublished: true },
+      { id: "res_02", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_03", fullName: "Lê Hoàng Nam", className: "8B", grade: "8", photoUrl: "" }], score: 1910, prize: "Nhất", notes: "Hoàn thành bài thi sớm", isPublished: true },
+      { id: "res_03", contestId: "contest_ioe", type: "TEAM", teamName: "Đội Song Ngữ 8AB", members: [{ studentId: "st_02", fullName: "Trần Bảo Ngọc", className: "8A", grade: "8", photoUrl: "" }, { studentId: "st_04", fullName: "Phạm Gia Hân", className: "8B", grade: "8", photoUrl: "" }], score: 1850, prize: "Nhì", notes: "Giải tập thể liên lớp 8A - 8B", isPublished: true },
+      { id: "res_04", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_05", fullName: "Vũ Đức Anh", className: "9A", grade: "9", photoUrl: "" }], score: 1880, prize: "Nhất", notes: "Thủ khoa khối 9", isPublished: true },
+      { id: "res_05", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_07", fullName: "Bùi Tuấn Kiệt", className: "7A", grade: "7", photoUrl: "" }], score: 1790, prize: "Nhì", notes: "Giải cao nhất khối 7", isPublished: true },
+      { id: "res_06", contestId: "contest_ioe", type: "INDIVIDUAL", teamName: "", members: [{ studentId: "st_08", fullName: "Ngô Quang Huy", className: "6A", grade: "6", photoUrl: "" }], score: 1740, prize: "Ba", notes: "Học sinh tiêu biểu khối 6", isPublished: true }
+    ];
+
+    const INITIAL_ANNOUNCEMENTS = [
+      {
+        id: "ann_01",
+        title: "Mở đăng ký Hội thi Tin học trẻ năm học 2026–2027 (Kèm thể lệ PDF)",
+        contestId: "contest_tht",
+        isPinned: true,
+        isScheduleChange: false,
+        oldSchedule: "",
+        newSchedule: "",
+        updatedAt: "2026-11-15",
+        attachmentName: "The_le_Tin_hoc_tre_2026_2027.pdf",
+        content: "Nhà trường chính thức mở cổng đăng ký Hội thi Tin học trẻ. Hạn nội bộ của trường: 02/12/2026 (Hạn BTC: 05/12/2026). Liên hệ: Phụ trách kỹ thuật (0989473535)."
+      },
+      {
+        id: "ann_02",
+        title: "[THÔNG BÁO ĐỔI LỊCH] Điều chỉnh giờ thi Vòng 2 Cuộc thi Khoa học Kỹ thuật",
+        contestId: "contest_khkt",
+        isPinned: true,
+        isScheduleChange: true,
+        oldSchedule: "14:00 ngày 26/11/2026 tại Hội trường tầng 2",
+        newSchedule: "08:00 ngày 28/11/2026 tại Nhà đa năng Trường THCS Thành Vinh 1",
+        updatedAt: "2026-11-18",
+        attachmentName: "So_do_gian_trung_bay_KHKT.pdf",
+        content: "Điều chỉnh thời gian và địa điểm trưng bày Poster KHKT sang sáng thứ Bảy 28/11/2026."
+      }
+    ];
+
+    const INITIAL_CHAT = [
+      {
+        id: "msg_1",
+        senderName: "Nguyễn Minh Khôi (Lớp 8A)",
+        isAdmin: false,
+        text: "Cho em hỏi, em muốn đăng ký đội thi Tin học trẻ chung với bạn Lê Hoàng Nam lớp 8B thì điền form thế nào ạ?",
+        time: "08:15 · Hôm nay"
+      },
+      {
+        id: "msg_2",
+        senderName: "Phụ trách kỹ thuật · 0989473535",
+        isAdmin: true,
+        text: "Chào em! Em vào mục Cuộc thi -> chọn Hội thi Tin học trẻ -> bấm Đăng ký dự thi -> chọn hình thức Theo đội và điền thông tin cả 2 thành viên 8A và 8B nhé!",
+        time: "08:20 · Hôm nay"
+      }
+    ];
+
+    const WORKFLOW_META = {
+      UPCOMING: { label: "Sắp mở", badge: "bg-sky-100 text-sky-800 border-sky-200", situation: "UPCOMING" },
+      OPEN_REGISTRATION: { label: "Đang nhận đăng ký", badge: "bg-blue-600 text-white border-blue-600", situation: "ONGOING" },
+      IN_PROGRESS: { label: "Đang thi", badge: "bg-amber-500 text-white border-amber-500", situation: "ONGOING" },
+      CLOSED_REGISTRATION: { label: "Đã đóng đăng ký", badge: "bg-indigo-100 text-indigo-800 border-indigo-200", situation: "ONGOING" },
+      WAITING_RESULTS: { label: "Chờ kết quả", badge: "bg-purple-100 text-purple-800 border-purple-200", situation: "ONGOING" },
+      RESULTS_PUBLISHED: { label: "Đã công bố kết quả", badge: "bg-emerald-600 text-white border-emerald-600", situation: "ENDED" }
+    };
+
+    const SITUATION_META = {
+      ONGOING: { label: "Đang diễn ra", badge: "bg-rose-600 text-white" },
+      UPCOMING: { label: "Sắp diễn ra", badge: "bg-sky-600 text-white" },
+      ENDED: { label: "Đã kết thúc", badge: "bg-slate-500 text-white" }
+    };
+
+    const PRIORITY_ORDER = {
+      OPEN_REGISTRATION: 1,
+      IN_PROGRESS: 2,
+      UPCOMING: 3,
+      CLOSED_REGISTRATION: 4,
+      WAITING_RESULTS: 5,
+      RESULTS_PUBLISHED: 6
+    };
+
+    function sortContestsOngoingFirst(list) {
+      return [...list].sort((a, b) => {
+        const pA = PRIORITY_ORDER[a.workflowStatus] || 99;
+        const pB = PRIORITY_ORDER[b.workflowStatus] || 99;
+        if (pA !== pB) return pA - pB;
+        return (a.registrationEnd || "9999-12-31").localeCompare(b.registrationEnd || "9999-12-31");
+      });
+    }
+
+    function getContestSituation(c) {
+      if (c.publishStatus === "ARCHIVED" || c.workflowStatus === "RESULTS_PUBLISHED") return "ENDED";
+      if (c.workflowStatus === "UPCOMING") return "UPCOMING";
+      return "ONGOING";
+    }
+
+    // Tính số ngày còn lại đến hạn nộp báo cáo cấp trên (Nhắc trước 3 ngày)
+    function getReportReminderInfo(contest) {
+      if (!contest.reportDeadline) return null;
+      if (contest.reportSubmitted) {
+        return { status: "COMPLETED", label: `Đã nộp báo cáo (${contest.reportDeadline})`, daysLeft: null };
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const due = new Date(contest.reportDeadline + "T00:00:00");
+      const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) {
+        return { status: "OVERDUE", label: `Quá hạn nộp báo cáo ${Math.abs(diffDays)} ngày (${contest.reportDeadline})`, daysLeft: diffDays };
+      }
+      if (diffDays <= 3) {
+        return {
+          status: "DUE_SOON",
+          label: diffDays === 0 ? `Hôm nay là hạn chót nộp báo cáo (${contest.reportDeadline})` : `Sắp đến hạn nộp báo cáo: còn ${diffDays} ngày (${contest.reportDeadline})`,
+          daysLeft: diffDays
+        };
+      }
+      return { status: "NORMAL", label: `Hạn nộp báo cáo: ${contest.reportDeadline} (còn ${diffDays} ngày)`, daysLeft: diffDays };
+    }
+
+    // Nén ảnh học sinh tải lên (resize tối đa 320px)
+    function resizeImageToDataUrl(file, maxWidth = 320) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(1, maxWidth / img.width);
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL("image/jpeg", 0.82));
+          };
+          img.onerror = reject;
+          img.src = ev.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // =========================================================================
+    // 3. TÍCH HỢP GEMINI AI THẬT (ĐỌC PDF THỂ LỆ & TRẢ LỜI CHATBOX)
+    // =========================================================================
+    async function extractFullTextFromPdf(file) {
+      if (!window.pdfjsLib) throw new Error("Thư viện PDF.js chưa tải xong.");
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageStr = textContent.items.map((item) => item.str).join(" ").trim();
+        pages.push({ page: i, text: pageStr || "[Trang ảnh quét không có lớp văn bản]" });
+      }
+      return {
+        totalPages: pdf.numPages,
+        pages,
+        fullText: pages.map((p) => `--- TRANG ${p.page} ---\n${p.text}`).join("\n\n")
+      };
+    }
+
+    async function callGeminiAnalyzePdf({ rawText, fileName, docType, schoolConfig, apiKey }) {
+      const effectiveKey = (apiKey || DEFAULT_GEMINI_API_KEY || "").trim();
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${effectiveKey}`;
+
+      const systemPrompt = `Bạn là chuyên gia giáo dục và trợ lý hành chính của ${schoolConfig.schoolName} (năm học ${schoolConfig.academicYear}). Hãy đọc kỹ nội dung văn bản trích xuất từ tệp PDF (${docType === "THE_LE" ? "Thể lệ cuộc thi" : "Thông báo lịch thi"}) và trích xuất chính xác các trường dữ liệu theo JSON schema. Nếu mục nào không có trong văn bản, ghi "Chưa nêu trong tài liệu". Không tự bịa giờ thi nếu tài liệu chỉ ghi ngày. Soạn thêm một bài thông báo ngắn gọn, rõ ràng dành cho học sinh THCS (kèm thông tin liên hệ ${schoolConfig.contactPerson} - SĐT: ${schoolConfig.contactPhone}).`;
+
+      const payload = {
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: `Tên tệp: ${fileName}\n\nNội dung văn bản PDF:\n${rawText.slice(0, 28000)}` }]
+          }
+        ],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              contestName: { type: "STRING" },
+              organizer: { type: "STRING" },
+              level: { type: "STRING" },
+              targetGrades: { type: "ARRAY", items: { type: "STRING" } },
+              format: { type: "STRING" },
+              registrationDeadlineISO: { type: "STRING" },
+              preliminaryDateISO: { type: "STRING" },
+              finalDateISO: { type: "STRING" },
+              thoiHanSummary: { type: "STRING" },
+              submissionRules: { type: "STRING" },
+              milestones: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    name: { type: "STRING" },
+                    dateText: { type: "STRING" },
+                    pageRef: { type: "STRING" }
+                  }
+                }
+              },
+              studentArticle: { type: "STRING" }
+            },
+            required: ["contestName", "organizer", "level", "format", "thoiHanSummary", "milestones", "studentArticle"]
+          }
+        }
+      };
+
+      const delays = [1000, 2000, 4000];
+      for (let attempt = 0; attempt <= delays.length; attempt++) {
+        try {
+          const resp = await fetch(apiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          if (!resp.ok) {
+            if (resp.status === 429 && attempt < delays.length) {
+              await new Promise((r) => setTimeout(r, delays[attempt]));
+              continue;
+            }
+            throw new Error(`HTTP ${resp.status}`);
+          }
+          const data = await resp.json();
+          const textPart = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!textPart) throw new Error("Phản hồi Gemini trống");
+          return JSON.parse(textPart);
+        } catch (err) {
+          if (attempt === delays.length) throw err;
+          await new Promise((r) => setTimeout(r, delays[attempt]));
+        }
+      }
+    }
+
+    async function callGeminiChatAssistant({ userMessage, contests, schoolConfig, apiKey }) {
+      const effectiveKey = (apiKey || DEFAULT_GEMINI_API_KEY || "").trim();
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${effectiveKey}`;
+
+      const contestContext = contests
+        .map((c) => `- ${c.title} (${c.level}, Khối ${c.grades.join(",")}, Hình thức: ${c.format}, Thời hạn: ${c.thoiHan}, Hạn ĐK: ${c.registrationEnd})`)
+        .join("\n");
+
+      const systemPrompt = `Bạn là Trợ lý AI chính thức của Cổng quản lý cuộc thi học sinh ${schoolConfig.schoolName} (năm học ${schoolConfig.academicYear}). Hãy trả lời ngắn gọn, thân thiện, chính xác bằng tiếng Việt cho học sinh và phụ huynh dựa trên danh sách cuộc thi hiện hành sau:\n${contestContext}\n\nLuôn nhắc nếu cần hỗ trợ trực tiếp hoặc xác nhận đặc biệt thì liên hệ ${schoolConfig.contactPerson} qua số điện thoại ${schoolConfig.contactPhone}.`;
+
+      const payload = {
+        contents: [{ role: "user", parts: [{ text: userMessage }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] }
+      };
+
+      const resp = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    }
+
+    // =========================================================================
+    // 4. TIỆN ÍCH XUẤT EXCEL (CSV UTF-8) & TẢI PDF THỂ LỆ
+    // =========================================================================
+    function downloadCSV(filename, headers, rows) {
+      const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const csv = "\uFEFF" + [headers.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadRulePDF(contest, schoolName) {
+      const ascii = (s) =>
+        String(s || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/đ/g, "d")
+          .replace(/Đ/g, "D")
+          .replace(/[^\x20-\x7E]/g, "");
+
+      const lines = [
+        `THE LE / THONG BAO CUOC THI - ${ascii(schoolName).toUpperCase()}`,
+        `Ten cuoc thi: ${ascii(contest.title)}`,
+        `Don vi to chuc: ${ascii(contest.organizer)} (${ascii(contest.level)})`,
+        `Doi tuong: Khoi ${contest.grades.join(", ")} | Hinh thuc: ${ascii(contest.format)}`,
+        `Thoi han: ${ascii(contest.thoiHan)}`,
+        `Lien he phu trach: ${ascii(contest.contactInfo)}`,
+        `----------------------------------------------------`,
+        ...(contest.pdfRule?.summaryPages || []).map((p) => ascii(p))
+      ];
+      let y = 760;
+      const cmds = lines
+        .map((l) => {
+          const c = `BT /F1 11 Tf 45 ${y} Td (${l.replace(/\(/g, "[").replace(/\)/g, "]")}) Tj ET`;
+          y -= 22;
+          return c;
+        })
+        .join("\n");
+
+      const pdf = `%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >> endobj\n4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n5 0 obj << /Length ${cmds.length} >> stream\n${cmds}\nendstream endobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000229 00000 n \n0000000297 00000 n \ntrailer << /Size 6 /Root 1 0 R >>\nstartxref\n${350 + cmds.length}\n%%EOF`;
+      const blob = new Blob([pdf], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = contest.pdfRule?.fileName || "The_le_cuoc_thi.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // =========================================================================
+    // 5. ỨNG DỤNG CHÍNH: CỔNG QUẢN LÝ CUỘC THI HỌC SINH
+    // =========================================================================
+    function App() {
+      const loadLocal = (key, fallback) => {
+        try {
+          const saved = localStorage.getItem(`thcs_portal_${key}`);
+          return saved ? JSON.parse(saved) : fallback;
+        } catch (e) {
+          return fallback;
+        }
+      };
+
+      const [schoolConfig, setSchoolConfig] = useState(() => loadLocal("schoolConfig", INITIAL_SCHOOL_CONFIG));
+      const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem("thcs_gemini_key") || DEFAULT_GEMINI_API_KEY);
+      const [classes, setClasses] = useState(() => loadLocal("classes", INITIAL_CLASSES));
+      const [contests, setContests] = useState(() => loadLocal("contests", INITIAL_CONTESTS));
+      const [registrations, setRegistrations] = useState(() => loadLocal("registrations", INITIAL_REGISTRATIONS));
+      const [results, setResults] = useState(() => loadLocal("results", INITIAL_RESULTS));
+      const [announcements, setAnnouncements] = useState(() => loadLocal("announcements", INITIAL_ANNOUNCEMENTS));
+      const [chatMessages, setChatMessages] = useState(() => loadLocal("chatMessages", INITIAL_CHAT));
+
+      const [authUser, setAuthUser] = useState(null);
+      const [activeTab, setActiveTab] = useState("HOME");
+      const [selectedContestId, setSelectedContestId] = useState("contest_tht");
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [showLoginModal, setShowLoginModal] = useState(false);
+      const [loginUser, setLoginUser] = useState("");
+      const [loginPass, setLoginPass] = useState("");
+      const [pdfPreviewContest, setPdfPreviewContest] = useState(null);
+      const [toast, setToast] = useState(null);
+      const [confirmBox, setConfirmBox] = useState(null);
+
+      // Chatbox state
+      const [chatOpen, setChatOpen] = useState(false);
+      const [chatName, setChatName] = useState("");
+      const [chatText, setChatText] = useState("");
+      const [isAiReplying, setIsAiReplying] = useState(false);
+
+      const notify = (msg, isError = false) => {
+        setToast({ msg, isError });
+        setTimeout(() => setToast(null), 4000);
+      };
+
+      // Lưu tự động vào localStorage
+      useEffect(() => {
+        try { localStorage.setItem("thcs_portal_schoolConfig", JSON.stringify(schoolConfig)); } catch (e) {}
+      }, [schoolConfig]);
+
+      useEffect(() => {
+        try { localStorage.setItem("thcs_gemini_key", geminiApiKey); } catch (e) {}
+      }, [geminiApiKey]);
+
+      useEffect(() => {
+        try { localStorage.setItem("thcs_portal_classes", JSON.stringify(classes)); } catch (e) {}
+      }, [classes]);
+
+      useEffect(() => {
+        try { localStorage.setItem("thcs_portal_contests", JSON.stringify(contests)); } catch (e) {}
+      }, [contests]);
+
+      useEffect(() => {
+        try { localStorage.setItem("thcs_portal_registrations", JSON.stringify(registrations)); } catch (e) {}
+      }, [registrations]);
+
+      useEffect(() => {
+        try { localStorage.setItem("thcs_portal_results", JSON.stringify(results)); } catch (e) {}
+      }, [results]);
+
+      useEffect(() => {
+        try { localStorage.setItem("thcs_portal_announcements", JSON.stringify(announcements)); } catch (e) {}
+      }, [announcements]);
+
+      useEffect(() => {
+        try { localStorage.setItem("thcs_portal_chatMessages", JSON.stringify(chatMessages)); } catch (e) {}
+      }, [chatMessages]);
+
+      // Kết nối Firebase Auth
+      useEffect(() => {
+        if (!auth) return;
+        const unsubAuth = auth.onAuthStateChanged((user) => {
+          setAuthUser(user);
+        });
+        if (typeof __initial_auth_token !== "undefined" && __initial_auth_token) {
+          auth.signInWithCustomToken(__initial_auth_token).catch(() => {});
+        } else {
+          auth.signInAnonymously().catch(() => {});
+        }
+        return () => unsubAuth();
+      }, []);
+
+      // Kết nối Firestore Realtime khi đã đăng nhập Auth
+      useEffect(() => {
+        if (!db || !authUser) return;
+        const col = (name) => db.collection("artifacts").doc(APP_ID).collection("public").doc("data").collection(name);
+
+        const u1 = col("contests").onSnapshot(
+          (snap) => {
+            if (!snap.empty) setContests(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          () => {}
+        );
+        const u2 = col("registrations").onSnapshot(
+          (snap) => {
+            if (!snap.empty) setRegistrations(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          () => {}
+        );
+        const u3 = col("results").onSnapshot(
+          (snap) => {
+            if (!snap.empty) setResults(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          () => {}
+        );
+        const u4 = col("announcements").onSnapshot(
+          (snap) => {
+            if (!snap.empty) setAnnouncements(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          () => {}
+        );
+        const u_cls = col("classes").onSnapshot(
+          (snap) => {
+            if (!snap.empty) setClasses(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          () => {}
+        );
+        const u5 = col("chat").onSnapshot(
+          (snap) => {
+            if (!snap.empty) {
+              const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+              arr.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+              setChatMessages(arr);
+            }
+          },
+          () => {}
+        );
+        return () => { u1(); u2(); u3(); u4(); u_cls(); u5(); };
+      }, [authUser]);
+
+      const syncDoc = async (collectionName, id, data) => {
+        if (!db || !auth?.currentUser) return;
+        try {
+          await db.collection("artifacts").doc(APP_ID).collection("public").doc("data").collection(collectionName).doc(id).set(data, { merge: true });
+        } catch (e) {}
+      };
+
+      const deleteDocRemote = async (collectionName, id) => {
+        if (!db || !auth?.currentUser) return;
+        try {
+          await db.collection("artifacts").doc(APP_ID).collection("public").doc("data").collection(collectionName).doc(id).delete();
+        } catch (e) {}
+      };
+
+      // Số lượng cuộc thi có báo cáo sắp đến hạn <= 3 ngày hoặc quá hạn
+      const urgentReportContests = useMemo(() => {
+        return contests.filter((c) => {
+          const info = getReportReminderInfo(c);
+          return info && (info.status === "DUE_SOON" || info.status === "OVERDUE");
+        });
+      }, [contests]);
+
+      const handleAdminLogin = (e) => {
+        e.preventDefault();
+        const u = loginUser.trim().toLowerCase();
+        const p = loginPass.trim();
+        if ((u === "admin" || u === "thaythong") && (p === "admin123" || p === "0989473535")) {
+          setIsAdmin(true);
+          setShowLoginModal(false);
+          setLoginUser("");
+          setLoginPass("");
+          setActiveTab("MANAGE");
+          notify("Đăng nhập quản trị thành công!");
+        } else {
+          notify("Tài khoản hoặc mật khẩu không đúng!", true);
+        }
+      };
+
+      const handleSendChat = async (e) => {
+        e.preventDefault();
+        const question = chatText.trim();
+        if (!question) return;
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        const userMsg = {
+          id: `msg_${Date.now()}`,
+          senderName: isAdmin ? `${schoolConfig.contactPerson} · ${schoolConfig.contactPhone}` : (chatName.trim() || "Học sinh / Phụ huynh"),
+          isAdmin,
+          text: question,
+          time: timeStr,
+          ts: Date.now()
+        };
+        setChatMessages((prev) => [...prev, userMsg]);
+        setChatText("");
+        await syncDoc("chat", userMsg.id, userMsg);
+
+        if (!isAdmin) {
+          setIsAiReplying(true);
+          try {
+            const aiReplyText = await callGeminiChatAssistant({
+              userMessage: question,
+              contests,
+              schoolConfig,
+              apiKey: geminiApiKey
+            });
+            if (aiReplyText) {
+              const aiMsg = {
+                id: `msg_ai_${Date.now()}`,
+                senderName: `Trợ lý AI (${schoolConfig.schoolName})`,
+                isAdmin: true,
+                text: aiReplyText,
+                time: timeStr,
+                ts: Date.now() + 1
+              };
+              setChatMessages((prev) => [...prev, aiMsg]);
+              await syncDoc("chat", aiMsg.id, aiMsg);
+            }
+          } catch (err) {
+            const fallbackMsg = {
+              id: `msg_fb_${Date.now()}`,
+              senderName: `Hệ thống hỗ trợ (${schoolConfig.contactPerson})`,
+              isAdmin: true,
+              text: `Cảm ơn bạn đã gửi câu hỏi! Để được giải đáp chi tiết ngay, vui lòng gọi hoặc nhắn Zalo trực tiếp cho ${schoolConfig.contactPerson} qua số ${schoolConfig.contactPhone}.`,
+              time: timeStr,
+              ts: Date.now() + 1
+            };
+            setChatMessages((prev) => [...prev, fallbackMsg]);
+            await syncDoc("chat", fallbackMsg.id, fallbackMsg);
+          } finally {
+            setIsAiReplying(false);
+          }
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+          {/* Thông báo Toast */}
+          {toast && (
+            <div className={`fixed bottom-20 right-4 z-50 px-4 py-3 rounded-xl shadow-xl text-xs sm:text-sm font-bold text-white ${toast.isError ? "bg-rose-600" : "bg-blue-900"}`}>
+              {toast.msg}
+            </div>
+          )}
+
+          {/* Hộp thoại Xác nhận (Thay thế confirm()) */}
+          {confirmBox && (
+            <div className="fixed inset-0 z-50 bg-slate-900/65 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+                <h3 className="text-base font-extrabold text-slate-900">{confirmBox.title}</h3>
+                <p className="text-xs text-slate-600 leading-relaxed">{confirmBox.message}</p>
+                <div className="flex justify-end gap-2 pt-2 text-xs">
+                  <button onClick={() => setConfirmBox(null)} className="px-4 py-2 rounded-xl border border-slate-300 font-bold text-slate-700">
+                    Hủy
+                  </button>
+                  <button
+                    onClick={() => {
+                      confirmBox.onConfirm();
+                      setConfirmBox(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold"
+                  >
+                    {confirmBox.confirmLabel || "Xác nhận"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Xem Thể lệ PDF */}
+          {pdfPreviewContest && (
+            <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
+                <div className="px-5 py-4 bg-blue-950 text-white flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-sm sm:text-base">{pdfPreviewContest.pdfRule?.fileName || "The_le.pdf"}</h3>
+                    <p className="text-xs text-blue-200">Cập nhật: {pdfPreviewContest.pdfRule?.updatedAt}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => downloadRulePDF(pdfPreviewContest, schoolConfig.schoolName)} className="px-3 py-1.5 rounded-lg bg-amber-400 text-blue-950 font-bold text-xs">
+                      Tải PDF
+                    </button>
+                    <button onClick={() => setPdfPreviewContest(null)} className="px-2.5 py-1 rounded-lg bg-blue-900 text-white text-xs font-bold">✕</button>
+                  </div>
+                </div>
+                <div className="p-5 overflow-y-auto space-y-3 bg-slate-100 text-xs">
+                  <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
+                    <h4 className="font-extrabold text-base text-center text-slate-900">{pdfPreviewContest.title}</h4>
+                    <p className="text-center text-slate-500">Đơn vị tổ chức: {pdfPreviewContest.organizer} ({pdfPreviewContest.level})</p>
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 font-bold text-amber-900">
+                      Thời hạn: {pdfPreviewContest.thoiHan}
+                    </div>
+                    {(pdfPreviewContest.pdfRule?.summaryPages || []).map((line, i) => (
+                      <div key={i} className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 leading-relaxed">{line}</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Topbar Thông tin trường & Nút Đăng nhập Quản trị */}
+          <div className="bg-blue-950 text-white text-xs">
+            <div className="max-w-7xl mx-auto px-4 py-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-bold text-amber-300">Năm học: {schoolConfig.academicYear}</span>
+                <span className="text-blue-400">|</span>
+                <span>{schoolConfig.contactPerson}: <strong className="text-white">{schoolConfig.contactPhone}</strong></span>
+                <span className="text-blue-400 hidden sm:inline">|</span>
+                <span className={`hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold ${db && authUser ? "text-emerald-300" : "text-sky-200"}`}>
+                  {db && authUser ? "● Đã kết nối Firebase Cloud" : "● Lưu tự động trên trình duyệt"}
+                </span>
+              </div>
+              <div>
+                {isAdmin ? (
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-600/30 border border-emerald-400/40 text-emerald-200 font-bold">
+                      Quản trị: {schoolConfig.contactPerson}
+                    </span>
+                    <button onClick={() => { setIsAdmin(false); if (activeTab === "MANAGE") setActiveTab("HOME"); notify("Đã đăng xuất quản trị."); }} className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold">
+                      Đăng xuất
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowLoginModal(true)} className="px-3 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-blue-950 font-extrabold">
+                    Đăng nhập quản trị
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Header & Thanh điều hướng */}
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+            <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              <button onClick={() => setActiveTab("HOME")} className="flex items-center gap-3 text-left">
+                <div className="w-10 h-10 rounded-xl bg-blue-700 text-white font-black flex items-center justify-center shadow-sm">
+                  {schoolConfig.logoText}
+                </div>
+                <div>
+                  <div className="font-extrabold text-sm sm:text-base text-slate-900">{schoolConfig.schoolName}</div>
+                  <div className="text-xs text-blue-700 font-semibold">Cổng quản lý cuộc thi học sinh</div>
+                </div>
+              </button>
+
+              <nav className="flex flex-wrap items-center gap-1.5 text-xs sm:text-sm">
+                {[
+                  { id: "HOME", label: "Trang chủ" },
+                  { id: "CONTESTS", label: "Cuộc thi" },
+                  { id: "SCHEDULE", label: "Lịch thi" },
+                  { id: "ANNOUNCEMENTS", label: "Thông báo" },
+                  { id: "RESULTS", label: "Kết quả" },
+                  { id: "HALL_OF_FAME", label: "Bảng vàng" }
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`px-3 py-2 rounded-xl font-bold transition ${
+                      activeTab === item.id || (item.id === "CONTESTS" && activeTab === "DETAIL")
+                        ? "bg-blue-50 text-blue-700"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                {isAdmin && (
+                  <button
+                    onClick={() => setActiveTab("MANAGE")}
+                    className={`px-3.5 py-2 rounded-xl font-extrabold flex items-center gap-1.5 ${
+                      activeTab === "MANAGE" ? "bg-blue-700 text-white" : "bg-blue-950 text-amber-300"
+                    }`}
+                  >
+                    <span>Quản trị & AI</span>
+                    {urgentReportContests.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black">
+                        {urgentReportContests.length}
+                      </span>
+                    )}
+                  </button>
+                )}
+              </nav>
+            </div>
+          </header>
+
+          {/* Nội dung chính */}
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
+            {activeTab === "HOME" && (
+              <HomePage
+                schoolConfig={schoolConfig}
+                contests={contests}
+                announcements={announcements}
+                results={results}
+                onOpenContest={(id) => { setSelectedContestId(id); setActiveTab("DETAIL"); }}
+                onNavigate={setActiveTab}
+                onOpenPdf={setPdfPreviewContest}
+              />
+            )}
+
+            {activeTab === "CONTESTS" && (
+              <ContestsPage
+                schoolConfig={schoolConfig}
+                contests={contests}
+                onOpenContest={(id) => { setSelectedContestId(id); setActiveTab("DETAIL"); }}
+                onOpenPdf={setPdfPreviewContest}
+              />
+            )}
+
+            {activeTab === "DETAIL" && (
+              <ContestDetailPage
+                contest={contests.find((c) => c.id === selectedContestId) || contests[0]}
+                schoolConfig={schoolConfig}
+                classes={classes}
+                registrations={registrations}
+                onBack={() => setActiveTab("CONTESTS")}
+                onOpenPdf={setPdfPreviewContest}
+                onRegister={async (newReg) => {
+                  const item = { ...newReg, id: `reg_${Date.now()}`, createdAt: new Date().toISOString().slice(0, 10) };
+                  setRegistrations((prev) => [item, ...prev]);
+                  await syncDoc("registrations", item.id, item);
+                  notify("Đã gửi đăng ký dự thi thành công! Hồ sơ đang chờ nhà trường duyệt.");
+                }}
+              />
+            )}
+
+            {activeTab === "SCHEDULE" && (
+              <SchedulePage contests={contests} schoolConfig={schoolConfig} onOpenContest={(id) => { setSelectedContestId(id); setActiveTab("DETAIL"); }} />
+            )}
+
+            {activeTab === "ANNOUNCEMENTS" && (
+              <AnnouncementsPage announcements={announcements} contests={contests} onOpenContest={(id) => { setSelectedContestId(id); setActiveTab("DETAIL"); }} />
+            )}
+
+            {activeTab === "RESULTS" && (
+              <ResultsPage contests={contests} results={results} classes={classes} />
+            )}
+
+            {activeTab === "HALL_OF_FAME" && (
+              <HallOfFamePage
+                contests={contests}
+                results={results}
+                classes={classes}
+                schoolConfig={schoolConfig}
+                onExport={() => {
+                  const pub = results.filter((r) => r.isPublished);
+                  downloadCSV(
+                    `Bang_vang_${schoolConfig.academicYear}.csv`,
+                    ["Họ và tên", "Lớp", "Cuộc thi", "Giải thưởng", "Điểm", "Hình thức"],
+                    pub.flatMap((r) => {
+                      const cTitle = contests.find((c) => c.id === r.contestId)?.title || "";
+                      return r.members.map((m) => [m.fullName, m.className, cTitle, r.prize, r.score, r.type === "TEAM" ? `Đội: ${r.teamName}` : "Cá nhân"]);
+                    })
+                  );
+                  notify("Đã xuất danh sách Bảng vàng ra file Excel!");
+                }}
+              />
+            )}
+
+            {activeTab === "MANAGE" && isAdmin && (
+              <AdminDashboard
+                schoolConfig={schoolConfig}
+                setSchoolConfig={setSchoolConfig}
+                geminiApiKey={geminiApiKey}
+                setGeminiApiKey={setGeminiApiKey}
+                classes={classes}
+                setClasses={setClasses}
+                contests={contests}
+                setContests={setContests}
+                registrations={registrations}
+                setRegistrations={setRegistrations}
+                results={results}
+                setResults={setResults}
+                announcements={announcements}
+                setAnnouncements={setAnnouncements}
+                syncDoc={syncDoc}
+                deleteDocRemote={deleteDocRemote}
+                notify={notify}
+                setConfirmBox={setConfirmBox}
+                onOpenPdf={setPdfPreviewContest}
+              />
+            )}
+          </main>
+
+          {/* Footer */}
+          <footer className="bg-white border-t border-slate-200 mt-10">
+            <div className="max-w-7xl mx-auto px-4 py-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+              <div>
+                <strong className="text-slate-800">{schoolConfig.schoolName}</strong> · Năm học {schoolConfig.academicYear} · Phụ trách: <strong>{schoolConfig.contactPerson}</strong> ({schoolConfig.contactPhone})
+              </div>
+              {!isAdmin && (
+                <button onClick={() => setShowLoginModal(true)} className="text-blue-700 font-bold hover:underline">
+                  Đăng nhập quản trị
+                </button>
+              )}
+            </div>
+          </footer>
+
+          {/* Chatbox Trao đổi & Trợ lý AI Gemini */}
+          <div className="fixed bottom-4 right-4 z-40">
+            {chatOpen ? (
+              <div className="w-[340px] sm:w-[380px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[490px]">
+                <div className="bg-blue-950 text-white px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-xs sm:text-sm">Trao đổi & Trợ lý AI Cuộc thi</div>
+                    <div className="text-[11px] text-amber-300">{schoolConfig.contactPerson} · {schoolConfig.contactPhone}</div>
+                  </div>
+                  <button onClick={() => setChatOpen(false)} className="text-blue-200 hover:text-white font-bold text-sm">✕</button>
+                </div>
+                <div className="p-3 bg-slate-50 flex-1 overflow-y-auto space-y-2.5 min-h-[240px] max-h-[300px]">
+                  {chatMessages.map((m) => (
+                    <div key={m.id} className={`flex flex-col ${m.isAdmin ? "items-start" : "items-end"}`}>
+                      <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs ${m.isAdmin ? "bg-blue-50 border border-blue-200 text-slate-800" : "bg-blue-600 text-white"}`}>
+                        <div className={`text-[10px] font-bold mb-0.5 ${m.isAdmin ? "text-blue-800" : "text-blue-100"}`}>{m.senderName}</div>
+                        <p className="whitespace-pre-line leading-relaxed">{m.text}</p>
+                        <div className="text-[9px] opacity-70 mt-1 text-right">{m.time}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {isAiReplying && (
+                    <div className="text-[11px] text-blue-700 font-semibold italic">Trợ lý AI Gemini đang tra cứu thể lệ và trả lời...</div>
+                  )}
+                </div>
+                <form onSubmit={handleSendChat} className="p-2.5 bg-white border-t border-slate-200 space-y-1.5">
+                  {!isAdmin && (
+                    <input
+                      type="text"
+                      value={chatName}
+                      onChange={(e) => setChatName(e.target.value)}
+                      placeholder="Tên học sinh / Lớp (VD: Minh Khôi - 8A)"
+                      className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50"
+                    />
+                  )}
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      required
+                      value={chatText}
+                      onChange={(e) => setChatText(e.target.value)}
+                      placeholder={isAdmin ? "Nhập phản hồi quản trị..." : "Hỏi AI hoặc Phụ trách kỹ thuật về cuộc thi..."}
+                      className="flex-1 px-3 py-2 border border-slate-300 rounded-xl text-xs"
+                    />
+                    <button type="submit" className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs">
+                      Gửi
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <button onClick={() => setChatOpen(true)} className="px-4 py-3 rounded-full bg-blue-700 hover:bg-blue-800 text-white shadow-xl border-2 border-white text-left">
+                <div className="text-xs font-extrabold">Trao đổi / Hỏi đáp AI</div>
+                <div className="text-[10px] text-blue-100">{schoolConfig.contactPerson} · {schoolConfig.contactPhone}</div>
+              </button>
+            )}
+          </div>
+
+          {/* Modal Đăng nhập Quản trị (Gọn gàng: chỉ Tài khoản & Mật khẩu) */}
+          {showLoginModal && (
+            <div className="fixed inset-0 z-50 bg-slate-900/65 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                  <h3 className="text-base font-extrabold text-slate-900">Đăng nhập quản trị</h3>
+                  <button onClick={() => setShowLoginModal(false)} className="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+                </div>
+                <form onSubmit={handleAdminLogin} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Tài khoản</label>
+                    <input type="text" required value={loginUser} onChange={(e) => setLoginUser(e.target.value)} placeholder="Nhập tài khoản" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Mật khẩu</label>
+                    <input type="password" required value={loginPass} onChange={(e) => setLoginPass(e.target.value)} placeholder="Nhập mật khẩu" className="w-full px-3 py-2.5 border border-slate-300 rounded-xl" />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button type="button" onClick={() => setShowLoginModal(false)} className="px-4 py-2 rounded-xl border border-slate-300 font-bold text-slate-700">Hủy</button>
+                    <button type="submit" className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold">Đăng nhập</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // TRANG CHỦ
+    // =========================================================================
+    function HomePage({ schoolConfig, contests, announcements, results, onOpenContest, onNavigate, onOpenPdf }) {
+      const published = sortContestsOngoingFirst(contests.filter((c) => c.publishStatus === "PUBLISHED"));
+      const featured = results.filter((r) => r.isPublished).slice(0, 4);
+
+      return (
+        <div className="space-y-8">
+          <section className="rounded-3xl bg-gradient-to-r from-blue-900 via-blue-800 to-blue-700 text-white p-6 sm:p-10 shadow-lg space-y-4">
+            <span className="inline-block px-3 py-1 rounded-full bg-amber-400/20 border border-amber-300/40 text-amber-300 text-xs font-bold">
+              Năm học {schoolConfig.academicYear} · Khối {schoolConfig.grades.join(", ")}
+            </span>
+            <h1 className="text-2xl sm:text-4xl font-extrabold leading-tight max-w-2xl">
+              Cổng thông tin & Đăng ký cuộc thi học sinh {schoolConfig.schoolName}
+            </h1>
+            <p className="text-blue-100 text-sm max-w-2xl">
+              Tra cứu thể lệ PDF, đăng ký dự thi cá nhân hoặc theo đội, theo dõi lịch thi và Bảng vàng vinh danh. Phụ trách: <strong className="text-amber-300">{schoolConfig.contactPerson} ({schoolConfig.contactPhone})</strong>.
+            </p>
+            <div className="flex flex-wrap gap-3 pt-2">
+              <button onClick={() => onNavigate("CONTESTS")} className="px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-blue-950 font-extrabold text-sm">
+                Xem danh sách cuộc thi
+              </button>
+              <button onClick={() => onNavigate("HALL_OF_FAME")} className="px-5 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-sm border border-white/25">
+                Bảng vàng & Xếp hạng lớp
+              </button>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg sm:text-xl font-extrabold text-slate-900">Cuộc thi đang diễn ra & Mở đăng ký</h2>
+              <button onClick={() => onNavigate("CONTESTS")} className="text-xs sm:text-sm font-bold text-blue-700 hover:underline">Xem tất cả →</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {published.slice(0, 3).map((c) => {
+                const wf = WORKFLOW_META[c.workflowStatus] || WORKFLOW_META.UPCOMING;
+                return (
+                  <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between gap-4">
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="px-2.5 py-0.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">{c.level}</span>
+                        <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold border ${wf.badge}`}>{wf.label}</span>
+                      </div>
+                      <h3 className="font-extrabold text-base text-slate-900">{c.title}</h3>
+                      {c.thoiHan && (
+                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold">
+                          ⏱ {c.thoiHan}
+                        </div>
+                      )}
+                      <p className="text-xs text-slate-600">Khối {c.grades.join(", ")} · {c.format}</p>
+                    </div>
+                    <div className="flex gap-2 pt-3 border-t border-slate-100">
+                      <button onClick={() => onOpenContest(c.id)} className="flex-1 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs">
+                        Chi tiết & Đăng ký
+                      </button>
+                      <button onClick={() => onOpenPdf(c)} className="py-2 px-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs">
+                        Thể lệ PDF
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="bg-gradient-to-br from-amber-50 via-white to-blue-50 rounded-3xl border border-amber-200 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-extrabold text-slate-900">Gương mặt tiêu biểu trên Bảng vàng</h2>
+              <button onClick={() => onNavigate("HALL_OF_FAME")} className="px-3.5 py-2 rounded-xl bg-amber-400 text-blue-950 font-extrabold text-xs">Xem Bảng vàng</button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {featured.map((r) => {
+                const firstPhoto = r.members.find((m) => m.photoUrl)?.photoUrl;
+                return (
+                  <div key={r.id} className="bg-white rounded-2xl p-4 border border-amber-200 shadow-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-blue-950 font-extrabold text-xs">Giải {r.prize}</span>
+                      <span className="text-xs font-bold text-blue-700">Lớp {r.members.map((m) => m.className).join(" & ")}</span>
+                    </div>
+                    <div className="flex items-center gap-3 pt-1">
+                      {firstPhoto ? (
+                        <img src={firstPhoto} alt="Học sinh" className="w-11 h-11 rounded-full object-cover border border-amber-300 shrink-0" />
+                      ) : (
+                        <div className="w-11 h-11 rounded-full bg-blue-100 text-blue-800 font-black text-xs flex items-center justify-center shrink-0">
+                          {r.members[0]?.fullName?.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <div className="font-extrabold text-sm text-slate-900">{r.members.map((m) => m.fullName).join(", ")}</div>
+                        <p className="text-xs text-slate-500 line-clamp-1">{contests.find((c) => c.id === r.contestId)?.title}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // DANH SÁCH CUỘC THI (TÌM KIẾM + LỌC THỜI GIAN, KHỐI, TÌNH TRẠNG)
+    // =========================================================================
+    function ContestsPage({ schoolConfig, contests, onOpenContest, onOpenPdf }) {
+      const [keyword, setKeyword] = useState("");
+      const [filterGrade, setFilterGrade] = useState("ALL");
+      const [filterMonth, setFilterMonth] = useState("ALL");
+      const [filterSituation, setFilterSituation] = useState("ALL");
+
+      const availableMonths = useMemo(() => {
+        const set = new Set();
+        contests.forEach((c) => {
+          if (c.registrationEnd) set.add(c.registrationEnd.slice(0, 7));
+          (c.rounds || []).forEach((r) => { if (r.date) set.add(r.date.slice(0, 7)); });
+        });
+        return Array.from(set).sort();
+      }, [contests]);
+
+      const filteredContests = useMemo(() => {
+        const list = contests
+          .filter((c) => c.publishStatus === "PUBLISHED")
+          .filter((c) => {
+            if (keyword.trim()) {
+              const q = keyword.toLowerCase();
+              const matchTitle = c.title.toLowerCase().includes(q);
+              const matchOrg = (c.organizer || "").toLowerCase().includes(q);
+              if (!matchTitle && !matchOrg) return false;
+            }
+            if (filterGrade !== "ALL" && !c.grades.includes(filterGrade)) return false;
+            if (filterSituation !== "ALL" && getContestSituation(c) !== filterSituation) return false;
+            if (filterMonth !== "ALL") {
+              const matchReg = (c.registrationEnd || "").startsWith(filterMonth);
+              const matchRound = (c.rounds || []).some((r) => (r.date || "").startsWith(filterMonth));
+              if (!matchReg && !matchRound) return false;
+            }
+            return true;
+          });
+        return sortContestsOngoingFirst(list);
+      }, [contests, keyword, filterGrade, filterMonth, filterSituation]);
+
+      return (
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-900">Danh sách cuộc thi học sinh</h1>
+            <p className="text-sm text-slate-600">Tìm kiếm nhanh và lọc cuộc thi theo thời gian, khối lớp và tình trạng tổ chức</p>
+          </div>
+
+          {/* Thanh tìm kiếm & Bộ lọc */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+            <input
+              type="text"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder="Tìm kiếm cuộc thi theo tên hoặc đơn vị tổ chức..."
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm"
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Lọc theo thời gian (Tháng)</label>
+                <select value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-semibold">
+                  <option value="ALL">Tất cả thời gian</option>
+                  {availableMonths.map((m) => (
+                    <option key={m} value={m}>Tháng {m.slice(5, 7)}/{m.slice(0, 4)}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Lọc theo khối lớp</label>
+                <select value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-semibold">
+                  <option value="ALL">Tất cả các khối</option>
+                  {schoolConfig.grades.map((g) => <option key={g} value={g}>Khối {g}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Lọc theo tình trạng</label>
+                <select value={filterSituation} onChange={(e) => setFilterSituation(e.target.value)} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-semibold">
+                  <option value="ALL">Tất cả tình trạng</option>
+                  <option value="ONGOING">Đang diễn ra</option>
+                  <option value="UPCOMING">Sắp diễn ra</option>
+                  <option value="ENDED">Đã kết thúc</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Danh sách thẻ cuộc thi */}
+          {filteredContests.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-sm text-slate-500">
+              Không tìm thấy cuộc thi nào phù hợp với bộ lọc hiện tại.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {filteredContests.map((c) => {
+                const wf = WORKFLOW_META[c.workflowStatus] || WORKFLOW_META.UPCOMING;
+                const sit = SITUATION_META[getContestSituation(c)];
+                return (
+                  <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between gap-4">
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-extrabold ${sit.badge}`}>{sit.label}</span>
+                          <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 text-xs font-bold">{c.level}</span>
+                        </div>
+                        <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold border ${wf.badge}`}>{wf.label}</span>
+                      </div>
+                      <h2 className="text-lg font-extrabold text-slate-900">{c.title}</h2>
+                      <p className="text-xs text-slate-600">{c.description}</p>
+                      {c.thoiHan && (
+                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold">
+                          ⏱ {c.thoiHan}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <div><span className="text-slate-500">Khối dự thi:</span> <strong>Khối {c.grades.join(", ")}</strong></div>
+                        <div><span className="text-slate-500">Hình thức:</span> <strong>{c.format}</strong></div>
+                        <div><span className="text-slate-500">Hạn trường:</span> <strong className="text-blue-700">{c.schoolInternalDeadline || c.registrationEnd}</strong></div>
+                        <div><span className="text-slate-500">Hạn BTC:</span> <strong>{c.registrationEnd}</strong></div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-100">
+                      <button onClick={() => onOpenContest(c.id)} className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs">
+                        Chi tiết & Đăng ký dự thi
+                      </button>
+                      <button onClick={() => onOpenPdf(c)} className="py-2.5 px-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs">
+                        Xem PDF
+                      </button>
+                      <button onClick={() => downloadRulePDF(c, schoolConfig.schoolName)} className="py-2.5 px-3 rounded-xl bg-amber-400 text-blue-950 font-bold text-xs">
+                        Tải PDF
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // CHI TIẾT CUỘC THI & FORM ĐĂNG KÝ DỰ THI (CÁ NHÂN / THEO ĐỘI)
+    // =========================================================================
+    function ContestDetailPage({ contest, schoolConfig, classes, registrations, onBack, onOpenPdf, onRegister }) {
+      const [showForm, setShowForm] = useState(false);
+      const [regType, setRegType] = useState("INDIVIDUAL");
+
+      // Form cá nhân
+      const [indName, setIndName] = useState("");
+      const [indClass, setIndClass] = useState(classes[0]?.name || "8A");
+      const [indDob, setIndDob] = useState("");
+      const [indPhone, setIndPhone] = useState("");
+      const [indNote, setIndNote] = useState("");
+
+      // Form theo đội
+      const [teamName, setTeamName] = useState("");
+      const [teamProject, setTeamProject] = useState("");
+      const [teamPhone, setTeamPhone] = useState("");
+      const [teamMembers, setTeamMembers] = useState([
+        { fullName: "", className: classes[0]?.name || "8A", dob: "" },
+        { fullName: "", className: classes[1]?.name || "8B", dob: "" }
+      ]);
+
+      if (!contest) return null;
+      const contestRegs = registrations.filter((r) => r.contestId === contest.id);
+      const isClosed = contest.workflowStatus === "RESULTS_PUBLISHED" || contest.workflowStatus === "CLOSED_REGISTRATION";
+
+      const updateMember = (idx, field, val) => {
+        setTeamMembers((prev) => prev.map((m, i) => (i === idx ? { ...m, [field]: val } : m)));
+      };
+
+      const addMemberSlot = () => {
+        if (teamMembers.length >= 5) return;
+        setTeamMembers((prev) => [...prev, { fullName: "", className: classes[0]?.name || "8A", dob: "" }]);
+      };
+
+      const removeMemberSlot = (idx) => {
+        if (teamMembers.length <= 2) return;
+        setTeamMembers((prev) => prev.filter((_, i) => i !== idx));
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (regType === "INDIVIDUAL") {
+          if (!indName.trim()) return;
+          const clsObj = classes.find((c) => c.name === indClass);
+          onRegister({
+            contestId: contest.id,
+            type: "INDIVIDUAL",
+            teamName: "",
+            members: [{
+              studentId: `st_${Date.now()}`,
+              fullName: indName.trim(),
+              className: indClass,
+              grade: clsObj?.grade || indClass.charAt(0),
+              dob: indDob,
+              phone: indPhone.trim()
+            }],
+            status: "PENDING",
+            note: indNote.trim()
+          });
+          setIndName("");
+          setIndDob("");
+          setIndPhone("");
+          setIndNote("");
+        } else {
+          const validMembers = teamMembers.filter((m) => m.fullName.trim());
+          if (!teamName.trim() || validMembers.length < 2) return;
+          onRegister({
+            contestId: contest.id,
+            type: "TEAM",
+            teamName: teamName.trim(),
+            members: validMembers.map((m, i) => {
+              const clsObj = classes.find((c) => c.name === m.className);
+              return {
+                studentId: `st_${Date.now()}_${i}`,
+                fullName: m.fullName.trim(),
+                className: m.className,
+                grade: clsObj?.grade || m.className.charAt(0),
+                dob: m.dob,
+                phone: i === 0 ? teamPhone.trim() : ""
+              };
+            }),
+            status: "PENDING",
+            note: teamProject.trim()
+          });
+          setTeamName("");
+          setTeamProject("");
+          setTeamPhone("");
+        }
+        setShowForm(false);
+      };
+
+      return (
+        <div className="space-y-6">
+          <button onClick={onBack} className="text-xs sm:text-sm font-bold text-blue-700 hover:underline">
+            ← Quay lại danh sách cuộc thi
+          </button>
+
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 border-b border-slate-100 pb-5">
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">{contest.level}</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-bold">{contest.field}</span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">{contest.title}</h1>
+                <p className="text-sm text-slate-600">{contest.description}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 shrink-0">
+                <button onClick={() => onOpenPdf(contest)} className="px-4 py-2.5 rounded-xl bg-blue-50 text-blue-800 border border-blue-200 font-bold text-xs">
+                  Xem thể lệ PDF
+                </button>
+                <button onClick={() => downloadRulePDF(contest, schoolConfig.schoolName)} className="px-4 py-2.5 rounded-xl bg-amber-400 text-blue-950 font-bold text-xs">
+                  Tải thể lệ PDF
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                <span className="text-slate-500 font-bold">Đơn vị tổ chức & Đối tượng</span>
+                <p className="font-extrabold text-sm text-slate-900">{contest.organizer}</p>
+                <p className="text-slate-600">Khối {contest.grades.join(", ")} · {contest.format}</p>
+              </div>
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-1">
+                <span className="text-amber-800 font-bold">Mốc thời hạn</span>
+                <p className="font-extrabold text-sm text-amber-950">{contest.thoiHan}</p>
+                <p className="text-amber-900">Hạn trường: {contest.schoolInternalDeadline || contest.registrationEnd} · BTC: {contest.registrationEnd}</p>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                <span className="text-slate-500 font-bold">Địa điểm & Liên hệ</span>
+                <p className="font-extrabold text-sm text-slate-900">{contest.location}</p>
+                <p className="text-slate-600">{contest.contactInfo}</p>
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-blue-50/60 border border-blue-100 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-extrabold text-base text-slate-900">Thông báo & Hướng dẫn tham gia</h2>
+                {!isClosed && (
+                  <button onClick={() => setShowForm(!showForm)} className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-sm">
+                    {showForm ? "Đóng biểu mẫu" : "+ Đăng ký dự thi ngay"}
+                  </button>
+                )}
+              </div>
+              <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{contest.studentArticle}</p>
+            </div>
+
+            {/* Form Đăng ký dự thi dành cho học sinh (Cá nhân & Theo đội) */}
+            {showForm && !isClosed && (
+              <form onSubmit={handleSubmit} className="bg-blue-950 text-white rounded-2xl p-6 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between border-b border-blue-800 pb-3">
+                  <h3 className="font-extrabold text-base text-amber-300">Biểu mẫu đăng ký dự thi trực tuyến</h3>
+                  <button type="button" onClick={() => setShowForm(false)} className="text-blue-200 hover:text-white font-bold">✕</button>
+                </div>
+
+                {/* Chọn hình thức Cá nhân hoặc Theo đội */}
+                <div className="flex gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setRegType("INDIVIDUAL")}
+                    className={`flex-1 py-2.5 px-4 rounded-xl font-extrabold border ${regType === "INDIVIDUAL" ? "bg-amber-400 text-blue-950 border-amber-400" : "bg-blue-900 text-white border-blue-700"}`}
+                  >
+                    Đăng ký Cá nhân
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegType("TEAM")}
+                    className={`flex-1 py-2.5 px-4 rounded-xl font-extrabold border ${regType === "TEAM" ? "bg-amber-400 text-blue-950 border-amber-400" : "bg-blue-900 text-white border-blue-700"}`}
+                  >
+                    Đăng ký Theo đội (Nhiều thành viên)
+                  </button>
+                </div>
+
+                {regType === "INDIVIDUAL" ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <label className="block text-blue-200 font-bold mb-1">Họ và tên học sinh *</label>
+                      <input type="text" required value={indName} onChange={(e) => setIndName(e.target.value)} placeholder="VD: Nguyễn Văn An" className="w-full p-2.5 rounded-xl bg-white text-slate-900 font-semibold" />
+                    </div>
+                    <div>
+                      <label className="block text-blue-200 font-bold mb-1">Lớp *</label>
+                      <select value={indClass} onChange={(e) => setIndClass(e.target.value)} className="w-full p-2.5 rounded-xl bg-white text-slate-900 font-bold">
+                        {classes.map((cl) => <option key={cl.id} value={cl.name}>Lớp {cl.name} (Khối {cl.grade})</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-blue-200 font-bold mb-1">Ngày sinh</label>
+                      <input type="date" value={indDob} onChange={(e) => setIndDob(e.target.value)} className="w-full p-2.5 rounded-xl bg-white text-slate-900 font-semibold" />
+                    </div>
+                    <div>
+                      <label className="block text-blue-200 font-bold mb-1">Số điện thoại liên hệ (HS hoặc Phụ huynh) *</label>
+                      <input type="tel" required value={indPhone} onChange={(e) => setIndPhone(e.target.value)} placeholder="VD: 0987654321" className="w-full p-2.5 rounded-xl bg-white text-slate-900 font-semibold" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-blue-200 font-bold mb-1">Bảng thi / Nội dung đăng ký / Ghi chú</label>
+                      <input type="text" value={indNote} onChange={(e) => setIndNote(e.target.value)} placeholder="VD: Bảng B lập trình Python, hoặc số báo danh IOE..." className="w-full p-2.5 rounded-xl bg-white text-slate-900" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-blue-200 font-bold mb-1">Tên đội thi *</label>
+                        <input type="text" required value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="VD: Đội Sáng Tạo 8A-8B" className="w-full p-2.5 rounded-xl bg-white text-slate-900 font-bold" />
+                      </div>
+                      <div>
+                        <label className="block text-blue-200 font-bold mb-1">Tên đề tài / Sản phẩm</label>
+                        <input type="text" value={teamProject} onChange={(e) => setTeamProject(e.target.value)} placeholder="VD: Phần mềm học Toán" className="w-full p-2.5 rounded-xl bg-white text-slate-900 font-semibold" />
+                      </div>
+                      <div>
+                        <label className="block text-blue-200 font-bold mb-1">SĐT liên hệ đội trưởng *</label>
+                        <input type="tel" required value={teamPhone} onChange={(e) => setTeamPhone(e.target.value)} placeholder="VD: 0987654321" className="w-full p-2.5 rounded-xl bg-white text-slate-900 font-semibold" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-amber-300">Danh sách thành viên trong đội (Tối thiểu 2 thành viên, hỗ trợ liên lớp):</span>
+                        {teamMembers.length < 5 && (
+                          <button type="button" onClick={addMemberSlot} className="px-2.5 py-1 rounded-lg bg-blue-800 hover:bg-blue-700 text-amber-300 font-bold">
+                            + Thêm thành viên
+                          </button>
+                        )}
+                      </div>
+                      {teamMembers.map((m, idx) => (
+                        <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 bg-blue-900/60 p-2.5 rounded-xl border border-blue-800 items-center">
+                          <div className="sm:col-span-5">
+                            <input
+                              type="text"
+                              required
+                              value={m.fullName}
+                              onChange={(e) => updateMember(idx, "fullName", e.target.value)}
+                              placeholder={`Họ tên thành viên ${idx + 1} *`}
+                              className="w-full p-2 rounded-lg bg-white text-slate-900 font-semibold"
+                            />
+                          </div>
+                          <div className="sm:col-span-3">
+                            <select value={m.className} onChange={(e) => updateMember(idx, "className", e.target.value)} className="w-full p-2 rounded-lg bg-white text-slate-900 font-bold">
+                              {classes.map((cl) => <option key={cl.id} value={cl.name}>Lớp {cl.name}</option>)}
+                            </select>
+                          </div>
+                          <div className="sm:col-span-3">
+                            <input type="date" value={m.dob} onChange={(e) => updateMember(idx, "dob", e.target.value)} className="w-full p-2 rounded-lg bg-white text-slate-900" />
+                          </div>
+                          <div className="sm:col-span-1 text-right">
+                            {teamMembers.length > 2 && (
+                              <button type="button" onClick={() => removeMemberSlot(idx)} className="px-2 py-1 rounded bg-rose-600 text-white font-bold">✕</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 rounded-xl bg-blue-900 text-blue-200 text-xs font-bold">Hủy</button>
+                  <button type="submit" className="px-6 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-blue-950 text-xs font-extrabold">
+                    Hoàn tất & Gửi đăng ký
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Danh sách thí sinh / đội đã đăng ký */}
+            <div className="space-y-3">
+              <h3 className="font-extrabold text-base text-slate-900">Danh sách đã đăng ký tham gia ({contestRegs.length})</h3>
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-700">
+                    <tr>
+                      <th className="p-3">Thí sinh / Đội thi</th>
+                      <th className="p-3">Lớp</th>
+                      <th className="p-3">Hình thức</th>
+                      <th className="p-3">Ghi chú / Đề tài</th>
+                      <th className="p-3">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {contestRegs.map((r) => (
+                      <tr key={r.id}>
+                        <td className="p-3 font-bold text-slate-900">
+                          {r.type === "TEAM" ? `[Đội] ${r.teamName} (${r.members.map((m) => m.fullName).join(", ")})` : r.members[0]?.fullName}
+                        </td>
+                        <td className="p-3 font-bold text-blue-700">{[...new Set(r.members.map((m) => m.className))].join(" & ")}</td>
+                        <td className="p-3">{r.type === "TEAM" ? "Theo đội" : "Cá nhân"}</td>
+                        <td className="p-3 text-slate-500">{r.note || "—"}</td>
+                        <td className="p-3">
+                          <span className={`px-2.5 py-0.5 rounded-full font-bold ${r.status === "ATTENDED" ? "bg-emerald-50 text-emerald-700" : r.status === "APPROVED" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-800"}`}>
+                            {r.status === "ATTENDED" ? "Đã dự thi" : r.status === "APPROVED" ? "Đã duyệt" : "Chờ duyệt"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // LỊCH THI, THÔNG BÁO, KẾT QUẢ, BẢNG VÀNG
+    // =========================================================================
+    function SchedulePage({ contests, schoolConfig, onOpenContest }) {
+      const [grade, setGrade] = useState("ALL");
+      const events = contests
+        .filter((c) => c.publishStatus === "PUBLISHED" && (grade === "ALL" || c.grades.includes(grade)))
+        .flatMap((c) => (c.rounds || []).map((r) => ({ ...r, contestId: c.id, contestTitle: c.title })))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      return (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-2xl font-extrabold text-slate-900">Lịch thi các vòng</h1>
+            <select value={grade} onChange={(e) => setGrade(e.target.value)} className="p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-bold">
+              <option value="ALL">Tất cả khối</option>
+              {schoolConfig.grades.map((g) => <option key={g} value={g}>Khối {g}</option>)}
+            </select>
+          </div>
+          <div className="space-y-3">
+            {events.map((ev) => (
+              <div key={ev.id} onClick={() => onOpenContest(ev.contestId)} className="bg-white p-4 rounded-2xl border border-slate-200 hover:border-blue-400 cursor-pointer flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="px-3 py-2 rounded-xl bg-blue-900 text-white text-center min-w-[72px]">
+                    <div className="text-[10px] text-amber-300 font-bold">{ev.date.slice(0, 7)}</div>
+                    <div className="text-lg font-black">{ev.date.slice(8, 10)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-blue-700">{ev.contestTitle}</div>
+                    <div className="font-extrabold text-sm sm:text-base">{ev.name}</div>
+                    <div className="text-xs text-slate-500">{ev.time} · {ev.location}</div>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-blue-700">Chi tiết →</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function AnnouncementsPage({ announcements, contests, onOpenContest }) {
+      return (
+        <div className="space-y-4">
+          <h1 className="text-2xl font-extrabold text-slate-900">Thông báo cuộc thi</h1>
+          {announcements.map((a) => (
+            <div key={a.id} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-2.5">
+              <div className="flex items-center gap-2 text-xs">
+                {a.isPinned && <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">Ghim</span>}
+                {a.isScheduleChange && <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-bold">Đổi lịch thi</span>}
+                <span className="text-slate-400 ml-auto">{a.updatedAt}</span>
+              </div>
+              <h2 className="font-extrabold text-base text-slate-900">{a.title}</h2>
+              <p className="text-sm text-slate-700">{a.content}</p>
+              {a.isScheduleChange && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs space-y-1">
+                  <div className="line-through text-slate-500">Lịch cũ: {a.oldSchedule}</div>
+                  <div className="font-bold text-rose-800">Lịch mới: {a.newSchedule}</div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function ResultsPage({ contests, results, classes }) {
+      const [cFilter, setCFilter] = useState("ALL");
+      const [clsFilter, setClsFilter] = useState("ALL");
+      const list = results.filter((r) => r.isPublished && (cFilter === "ALL" || r.contestId === cFilter) && (clsFilter === "ALL" || r.members.some((m) => m.className === clsFilter)));
+
+      return (
+        <div className="space-y-5">
+          <h1 className="text-2xl font-extrabold text-slate-900">Tra cứu kết quả đã công bố</h1>
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-wrap gap-3 text-xs">
+            <select value={cFilter} onChange={(e) => setCFilter(e.target.value)} className="p-2.5 rounded-xl border border-slate-300 font-bold">
+              <option value="ALL">Tất cả cuộc thi</option>
+              {contests.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+            </select>
+            <select value={clsFilter} onChange={(e) => setClsFilter(e.target.value)} className="p-2.5 rounded-xl border border-slate-300 font-bold">
+              <option value="ALL">Tất cả lớp</option>
+              {classes.map((cl) => <option key={cl.id} value={cl.name}>Lớp {cl.name}</option>)}
+            </select>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto">
+            <table className="w-full text-left text-xs sm:text-sm">
+              <thead className="bg-blue-950 text-white font-bold">
+                <tr>
+                  <th className="p-3.5">Thí sinh / Đội</th>
+                  <th className="p-3.5">Lớp</th>
+                  <th className="p-3.5">Cuộc thi</th>
+                  <th className="p-3.5">Điểm</th>
+                  <th className="p-3.5">Giải thưởng</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {list.map((r) => (
+                  <tr key={r.id}>
+                    <td className="p-3.5 font-bold">{r.type === "TEAM" ? `[Đội] ${r.teamName} (${r.members.map((m) => m.fullName).join(", ")})` : r.members[0]?.fullName}</td>
+                    <td className="p-3.5 font-bold text-blue-700">{[...new Set(r.members.map((m) => m.className))].join(" & ")}</td>
+                    <td className="p-3.5 text-xs">{contests.find((c) => c.id === r.contestId)?.title}</td>
+                    <td className="p-3.5 font-extrabold">{r.score}</td>
+                    <td className="p-3.5"><span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-950 font-extrabold text-xs">Giải {r.prize}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function HallOfFamePage({ contests, results, classes, schoolConfig, onExport }) {
+      const pub = results.filter((r) => r.isPublished);
+
+      const leaderboard = useMemo(() => {
+        const map = {};
+        classes.forEach((cl) => { map[cl.name] = { className: cl.name, points: 0, count: 0 }; });
+        pub.forEach((r) => {
+          const pts = schoolConfig.scoringRules?.[r.prize] || 0;
+          const clsList = [...new Set(r.members.map((m) => m.className))];
+          const share = r.type === "TEAM" && schoolConfig.teamScoringMode === "SPLIT_EVENLY" ? Number((pts / clsList.length).toFixed(2)) : pts;
+          clsList.forEach((cn) => {
+            if (map[cn]) {
+              map[cn].points = Number((map[cn].points + share).toFixed(2));
+              map[cn].count += 1;
+            }
+          });
+        });
+        const sorted = Object.values(map).sort((a, b) => b.points - a.points);
+        let rank = 1;
+        return sorted.map((item, idx) => {
+          if (idx > 0 && item.points < sorted[idx - 1].points) rank = idx + 1;
+          return { ...item, rank };
+        });
+      }, [pub, classes, schoolConfig]);
+
+      const honorees = pub.flatMap((r) =>
+        r.members.map((m) => ({
+          id: `${r.id}_${m.studentId || m.fullName}`,
+          fullName: m.fullName,
+          className: m.className,
+          photoUrl: m.photoUrl || "",
+          prize: r.prize,
+          notes: r.notes || "",
+          contestTitle: contests.find((c) => c.id === r.contestId)?.title || "",
+          note: r.type === "TEAM" ? `Đội ${r.teamName}` : "Cá nhân"
+        }))
+      );
+
+      return (
+        <div className="space-y-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-extrabold text-slate-900">Bảng vàng & Xếp hạng thi đua lớp</h1>
+              <p className="text-xs text-slate-600">Nhất {schoolConfig.scoringRules["Nhất"]}đ · Nhì {schoolConfig.scoringRules["Nhì"]}đ · Ba {schoolConfig.scoringRules["Ba"]}đ · KK {schoolConfig.scoringRules["Khuyến khích"]}đ (Giải đội liên lớp chia đều điểm, đồng hạng khi bằng điểm)</p>
+            </div>
+            <button onClick={onExport} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs">Xuất Excel Bảng vàng</button>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto">
+            <table className="w-full text-left text-xs sm:text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200 font-bold">
+                <tr>
+                  <th className="p-3.5">Hạng</th>
+                  <th className="p-3.5">Lớp</th>
+                  <th className="p-3.5">Số giải</th>
+                  <th className="p-3.5">Tổng điểm</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {leaderboard.map((row) => (
+                  <tr key={row.className} className={row.rank === 1 ? "bg-amber-50/60" : ""}>
+                    <td className="p-3.5 font-black">#{row.rank}</td>
+                    <td className="p-3.5 font-extrabold">Lớp {row.className}</td>
+                    <td className="p-3.5">{row.count} giải</td>
+                    <td className="p-3.5 font-black text-blue-700">{row.points} điểm</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {honorees.map((h) => (
+              <div key={h.id} className="bg-gradient-to-br from-white to-amber-50/60 rounded-2xl border border-amber-200 p-4 space-y-2.5 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-blue-950 font-black text-xs">Giải {h.prize}</span>
+                  <span className="text-xs font-bold text-blue-800">Lớp {h.className}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  {h.photoUrl ? (
+                    <img src={h.photoUrl} alt={h.fullName} className="w-14 h-14 rounded-2xl object-cover border-2 border-amber-300 shadow-xs shrink-0" />
+                  ) : (
+                    <div className="w-14 h-14 rounded-2xl bg-blue-100 text-blue-800 font-black text-sm flex items-center justify-center border border-blue-200 shrink-0">
+                      {h.fullName.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="font-extrabold text-base text-slate-900 truncate">{h.fullName}</div>
+                    <div className="text-xs font-semibold text-blue-700 line-clamp-1">{h.contestTitle}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">{h.note}{h.notes ? ` · ${h.notes}` : ""}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // KHU VỰC QUẢN TRỊ VIÊN (NHẮC BÁO CÁO 3 NGÀY, AI GEMINI PDF, THÊM/SỬA/XÓA)
+    // =========================================================================
+    function AdminDashboard({
+      schoolConfig, setSchoolConfig, geminiApiKey, setGeminiApiKey, classes, setClasses,
+      contests, setContests, registrations, setRegistrations,
+      results, setResults, announcements, setAnnouncements,
+      syncDoc, deleteDocRemote, notify, setConfirmBox, onOpenPdf
+    }) {
+      const [adminTab, setAdminTab] = useState("AI_PDF");
+
+      // State Nhúng Gemini AI đọc PDF
+      const [docType, setDocType] = useState("THE_LE");
+      const [pdfFileName, setPdfFileName] = useState("");
+      const [isAnalyzingPdf, setIsAnalyzingPdf] = useState(false);
+      const [aiExtracted, setAiExtracted] = useState(null);
+
+      // State Tạo & Sửa Cuộc thi + Hạn nộp báo cáo cấp trên
+      const [editingContestId, setEditingContestId] = useState(null);
+      const [contestForm, setContestForm] = useState({
+        title: "",
+        organizer: schoolConfig.schoolName,
+        level: "Cấp Trường",
+        field: "Khoa học & Sáng tạo",
+        gradesText: "6, 7, 8, 9",
+        format: "Cá nhân & Đội",
+        registrationEnd: "2026-12-20",
+        thoiHan: "Hạn đăng ký: 20/12/2026",
+        reportDeadline: "",
+        location: schoolConfig.schoolName,
+        description: ""
+      });
+
+      // State Thêm & Sửa Kết quả / Bảng vàng vinh danh (kèm ảnh học sinh)
+      const [editingResultId, setEditingResultId] = useState(null);
+      const [hofForm, setHofForm] = useState({
+        contestId: contests[0]?.id || "contest_ioe",
+        type: "INDIVIDUAL",
+        teamName: "",
+        fullName: "",
+        className: classes[0]?.name || "8A",
+        photoUrl: "",
+        score: "100",
+        prize: "Nhất",
+        notes: "",
+        isPublished: true
+      });
+
+      // State Lọc duyệt đăng ký theo cuộc thi
+      const [regFilterContest, setRegFilterContest] = useState("ALL");
+
+      // State Quản lý Lớp học (Tạo, Sửa, Xóa)
+      const [editingClassId, setEditingClassId] = useState(null);
+      const [classForm, setClassForm] = useState({
+        name: "",
+        grade: schoolConfig.grades?.[0] || "6",
+        studentCount: "40",
+        homeroomTeacher: ""
+      });
+
+      const resetClassForm = () => {
+        setEditingClassId(null);
+        setClassForm({
+          name: "",
+          grade: schoolConfig.grades?.[0] || "6",
+          studentCount: "40",
+          homeroomTeacher: ""
+        });
+      };
+
+      const handleEditClassClick = (cl) => {
+        setEditingClassId(cl.id);
+        setClassForm({
+          name: cl.name || "",
+          grade: cl.grade || "6",
+          studentCount: String(cl.studentCount ?? ""),
+          homeroomTeacher: cl.homeroomTeacher || ""
+        });
+      };
+
+      const handleSaveClassForm = async (e) => {
+        e.preventDefault();
+        const trimmedName = classForm.name.trim();
+        if (!trimmedName) return;
+
+        const isDuplicate = classes.some(
+          (cl) => cl.name.toLowerCase() === trimmedName.toLowerCase() && cl.id !== editingClassId
+        );
+        if (isDuplicate) {
+          notify(`Tên lớp "${trimmedName}" đã tồn tại!`, true);
+          return;
+        }
+
+        if (editingClassId) {
+          const oldClass = classes.find((cl) => cl.id === editingClassId);
+          const oldName = oldClass?.name;
+          const updatedClass = {
+            ...oldClass,
+            name: trimmedName,
+            grade: classForm.grade,
+            studentCount: Number(classForm.studentCount) || 0,
+            homeroomTeacher: classForm.homeroomTeacher.trim()
+          };
+          setClasses((prev) => prev.map((cl) => (cl.id === editingClassId ? updatedClass : cl)));
+          await syncDoc("classes", editingClassId, updatedClass);
+
+          if (oldName && oldName !== trimmedName) {
+            setRegistrations((prev) =>
+              prev.map((r) => {
+                if (!r.members.some((m) => m.className === oldName)) return r;
+                const updReg = {
+                  ...r,
+                  members: r.members.map((m) => (m.className === oldName ? { ...m, className: trimmedName, grade: classForm.grade } : m))
+                };
+                syncDoc("registrations", r.id, updReg);
+                return updReg;
+              })
+            );
+            setResults((prev) =>
+              prev.map((res) => {
+                if (!res.members.some((m) => m.className === oldName)) return res;
+                const updRes = {
+                  ...res,
+                  members: res.members.map((m) => (m.className === oldName ? { ...m, className: trimmedName, grade: classForm.grade } : m))
+                };
+                syncDoc("results", res.id, updRes);
+                return updRes;
+              })
+            );
+          }
+
+          notify(`Đã cập nhật thông tin lớp "${trimmedName}"!`);
+          resetClassForm();
+        } else {
+          const newClass = {
+            id: `cls_${Date.now()}`,
+            name: trimmedName,
+            grade: classForm.grade,
+            studentCount: Number(classForm.studentCount) || 0,
+            homeroomTeacher: classForm.homeroomTeacher.trim()
+          };
+          setClasses((prev) => [...prev, newClass]);
+          await syncDoc("classes", newClass.id, newClass);
+          notify(`Đã thêm lớp mới "${trimmedName}"!`);
+          resetClassForm();
+        }
+      };
+
+      const handleDeleteClass = (cl) => {
+        setConfirmBox({
+          title: "Xác nhận xóa lớp học",
+          message: `Bạn có chắc chắn muốn xóa lớp "${cl.name}" khỏi hệ thống?`,
+          confirmLabel: "Xóa lớp",
+          onConfirm: async () => {
+            setClasses((prev) => prev.filter((item) => item.id !== cl.id));
+            await deleteDocRemote("classes", cl.id);
+            if (editingClassId === cl.id) resetClassForm();
+            notify(`Đã xóa lớp "${cl.name}".`);
+          }
+        });
+      };
+
+      const filteredAdminRegistrations = useMemo(() => {
+        return registrations.filter((r) => regFilterContest === "ALL" || r.contestId === regFilterContest);
+      }, [registrations, regFilterContest]);
+
+      const handleRegistrationStatusChange = async (reg, nextStatus) => {
+        if (nextStatus === "REJECTED") {
+          const targetName = reg.type === "TEAM" ? `Đội ${reg.teamName}` : reg.members[0]?.fullName;
+          setConfirmBox({
+            title: "Từ chối & Xóa hồ sơ đăng ký",
+            message: `Bạn chọn "Từ chối" đối với "${targetName}". Hồ sơ này sẽ bị xóa khỏi danh sách đăng ký. Xác nhận thực hiện?`,
+            confirmLabel: "Từ chối & Xóa luôn",
+            onConfirm: async () => {
+              setRegistrations((prev) => prev.filter((item) => item.id !== reg.id));
+              await deleteDocRemote("registrations", reg.id);
+              notify(`Đã từ chối và xóa hồ sơ của "${targetName}".`);
+            }
+          });
+          return;
+        }
+        const updated = { ...reg, status: nextStatus };
+        setRegistrations((prev) => prev.map((item) => (item.id === reg.id ? updated : item)));
+        await syncDoc("registrations", reg.id, updated);
+        notify("Đã cập nhật trạng thái thí sinh!");
+      };
+
+      // Các cuộc thi sắp đến hạn nộp báo cáo cấp trên trong <= 3 ngày hoặc quá hạn
+      const dueReports = useMemo(() => {
+        return contests
+          .map((c) => ({ contest: c, info: getReportReminderInfo(c) }))
+          .filter((item) => item.info && (item.info.status === "DUE_SOON" || item.info.status === "OVERDUE"));
+      }, [contests]);
+
+      const handleMarkReportSubmitted = async (contest) => {
+        const updated = { ...contest, reportSubmitted: true };
+        setContests((prev) => prev.map((c) => (c.id === contest.id ? updated : c)));
+        await syncDoc("contests", contest.id, { reportSubmitted: true });
+        notify(`Đã đánh dấu hoàn thành nộp báo cáo lên cấp trên cho "${contest.title}"!`);
+      };
+
+      const resetContestForm = () => {
+        setEditingContestId(null);
+        setContestForm({
+          title: "",
+          organizer: schoolConfig.schoolName,
+          level: "Cấp Trường",
+          field: "Khoa học & Sáng tạo",
+          gradesText: "6, 7, 8, 9",
+          format: "Cá nhân & Đội",
+          registrationEnd: "2026-12-20",
+          thoiHan: "Hạn đăng ký: 20/12/2026",
+          reportDeadline: "",
+          location: schoolConfig.schoolName,
+          description: ""
+        });
+      };
+
+      const handleEditContestClick = (c) => {
+        setEditingContestId(c.id);
+        setContestForm({
+          title: c.title || "",
+          organizer: c.organizer || "",
+          level: c.level || "Cấp Trường",
+          field: c.field || "Khoa học & Sáng tạo",
+          gradesText: (c.grades || ["6", "7", "8", "9"]).join(", "),
+          format: c.format || "Cá nhân & Đội",
+          registrationEnd: c.registrationEnd || "2026-12-20",
+          thoiHan: c.thoiHan || "",
+          reportDeadline: c.reportDeadline || "",
+          location: c.location || schoolConfig.schoolName,
+          description: c.description || ""
+        });
+      };
+
+      const handleSaveContestForm = async (e) => {
+        e.preventDefault();
+        if (!contestForm.title.trim()) return;
+        const parsedGrades = contestForm.gradesText.split(",").map((g) => g.trim()).filter(Boolean);
+
+        if (editingContestId) {
+          const existing = contests.find((c) => c.id === editingContestId);
+          const updated = {
+            ...existing,
+            title: contestForm.title.trim(),
+            organizer: contestForm.organizer.trim(),
+            level: contestForm.level,
+            field: contestForm.field.trim(),
+            grades: parsedGrades.length ? parsedGrades : ["6", "7", "8", "9"],
+            format: contestForm.format.trim(),
+            registrationEnd: contestForm.registrationEnd,
+            schoolInternalDeadline: contestForm.registrationEnd,
+            thoiHan: contestForm.thoiHan.trim(),
+            reportDeadline: contestForm.reportDeadline,
+            location: contestForm.location.trim(),
+            description: contestForm.description.trim()
+          };
+          setContests((prev) => prev.map((c) => (c.id === editingContestId ? updated : c)));
+          await syncDoc("contests", editingContestId, updated);
+          notify("Đã cập nhật thông tin cuộc thi!");
+          resetContestForm();
+        } else {
+          const created = {
+            id: `contest_${Date.now()}`,
+            title: contestForm.title.trim(),
+            academicYear: schoolConfig.academicYear,
+            organizer: contestForm.organizer.trim() || schoolConfig.schoolName,
+            level: contestForm.level,
+            field: contestForm.field.trim() || "Khoa học & Sáng tạo",
+            grades: parsedGrades.length ? parsedGrades : ["6", "7", "8", "9"],
+            format: contestForm.format.trim() || "Cá nhân & Đội",
+            publishStatus: "PUBLISHED",
+            workflowStatus: "OPEN_REGISTRATION",
+            registrationEnd: contestForm.registrationEnd,
+            schoolInternalDeadline: contestForm.registrationEnd,
+            reportDeadline: contestForm.reportDeadline,
+            reportSubmitted: false,
+            thoiHan: contestForm.thoiHan.trim() || `Hạn đăng ký: ${contestForm.registrationEnd}`,
+            location: contestForm.location.trim() || schoolConfig.schoolName,
+            contactInfo: `${schoolConfig.contactPerson} - SĐT: ${schoolConfig.contactPhone}`,
+            description: contestForm.description.trim() || "Cuộc thi dành cho học sinh THCS.",
+            studentArticle: `Mở đăng ký ${contestForm.title.trim()}. ${contestForm.thoiHan}. Liên hệ: ${schoolConfig.contactPerson} (${schoolConfig.contactPhone}).`,
+            pdfRule: { version: "v1.0", fileName: "The_le.pdf", updatedAt: new Date().toISOString().slice(0, 10), summaryPages: ["Trang 1: Thông tin cuộc thi."] },
+            rounds: [{ id: `r_${Date.now()}`, name: "Vòng thi chính thức", date: contestForm.registrationEnd, time: "08:00", location: contestForm.location || schoolConfig.schoolName, pic: schoolConfig.contactPerson }]
+          };
+          setContests((prev) => [created, ...prev]);
+          await syncDoc("contests", created.id, created);
+          notify("Đã tạo và công bố cuộc thi mới!");
+          resetContestForm();
+        }
+      };
+
+      const handleDeleteContest = (contest) => {
+        setConfirmBox({
+          title: "Xác nhận xóa cuộc thi",
+          message: `Bạn có chắc chắn muốn xóa cuộc thi "${contest.title}" khỏi hệ thống? Thao tác này không thể hoàn tác.`,
+          confirmLabel: "Xóa cuộc thi",
+          onConfirm: async () => {
+            setContests((prev) => prev.filter((c) => c.id !== contest.id));
+            await deleteDocRemote("contests", contest.id);
+            if (editingContestId === contest.id) resetContestForm();
+            notify("Đã xóa cuộc thi!");
+          }
+        });
+      };
+
+      // Xử lý tải ảnh học sinh lên Bảng vàng
+      const handleStudentPhotoUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+          const dataUrl = await resizeImageToDataUrl(file, 320);
+          setHofForm((prev) => ({ ...prev, photoUrl: dataUrl }));
+          notify("Đã tải ảnh học sinh lên biểu mẫu!");
+        } catch (err) {
+          notify("Không thể đọc tệp ảnh, vui lòng chọn ảnh JPG/PNG khác.", true);
+        }
+      };
+
+      const resetHofForm = () => {
+        setEditingResultId(null);
+        setHofForm({
+          contestId: contests[0]?.id || "contest_ioe",
+          type: "INDIVIDUAL",
+          teamName: "",
+          fullName: "",
+          className: classes[0]?.name || "8A",
+          photoUrl: "",
+          score: "100",
+          prize: "Nhất",
+          notes: "",
+          isPublished: true
+        });
+      };
+
+      const handleEditResultClick = (res) => {
+        setEditingResultId(res.id);
+        setHofForm({
+          contestId: res.contestId,
+          type: res.type || "INDIVIDUAL",
+          teamName: res.teamName || "",
+          fullName: res.members.map((m) => m.fullName).join(", "),
+          className: res.members[0]?.className || "8A",
+          photoUrl: res.members[0]?.photoUrl || "",
+          score: String(res.score ?? ""),
+          prize: res.prize || "Nhất",
+          notes: res.notes || "",
+          isPublished: Boolean(res.isPublished)
+        });
+      };
+
+      const handleSaveResultHof = async (e) => {
+        e.preventDefault();
+        if (!hofForm.fullName.trim()) return;
+        const clsObj = classes.find((c) => c.name === hofForm.className);
+        const names = hofForm.type === "TEAM"
+          ? hofForm.fullName.split(",").map((n) => n.trim()).filter(Boolean)
+          : [hofForm.fullName.trim()];
+
+        const membersArr = names.map((nm, idx) => ({
+          studentId: `st_hof_${Date.now()}_${idx}`,
+          fullName: nm,
+          className: hofForm.className,
+          grade: clsObj?.grade || hofForm.className.charAt(0),
+          photoUrl: idx === 0 ? hofForm.photoUrl : ""
+        }));
+
+        if (editingResultId) {
+          const updated = {
+            id: editingResultId,
+            contestId: hofForm.contestId,
+            type: hofForm.type,
+            teamName: hofForm.type === "TEAM" ? hofForm.teamName.trim() : "",
+            members: membersArr,
+            score: Number(hofForm.score) || 0,
+            prize: hofForm.prize,
+            notes: hofForm.notes.trim(),
+            isPublished: hofForm.isPublished
+          };
+          setResults((prev) => prev.map((r) => (r.id === editingResultId ? updated : r)));
+          await syncDoc("results", editingResultId, updated);
+          notify("Đã cập nhật kết quả & Bảng vàng vinh danh!");
+          resetHofForm();
+        } else {
+          const created = {
+            id: `res_${Date.now()}`,
+            contestId: hofForm.contestId,
+            type: hofForm.type,
+            teamName: hofForm.type === "TEAM" ? hofForm.teamName.trim() : "",
+            members: membersArr,
+            score: Number(hofForm.score) || 0,
+            prize: hofForm.prize,
+            notes: hofForm.notes.trim(),
+            isPublished: hofForm.isPublished
+          };
+          setResults((prev) => [created, ...prev]);
+          await syncDoc("results", created.id, created);
+          notify("Đã thêm thành tích mới lên Kết quả & Bảng vàng vinh danh!");
+          resetHofForm();
+        }
+      };
+
+      const handleDeleteResult = (res) => {
+        setConfirmBox({
+          title: "Xác nhận xóa kết quả / vinh danh",
+          message: `Bạn có chắc chắn muốn xóa thành tích của "${res.members.map((m) => m.fullName).join(", ")}" khỏi Kết quả và Bảng vàng?`,
+          confirmLabel: "Xóa thành tích",
+          onConfirm: async () => {
+            setResults((prev) => prev.filter((r) => r.id !== res.id));
+            await deleteDocRemote("results", res.id);
+            if (editingResultId === res.id) resetHofForm();
+            notify("Đã xóa kết quả & mục Bảng vàng!");
+          }
+        });
+      };
+
+      // Xử lý tải file PDF và gọi Gemini AI thật
+      const handlePdfUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setPdfFileName(file.name);
+        setIsAnalyzingPdf(true);
+        try {
+          const pdfData = await extractFullTextFromPdf(file);
+          const aiJson = await callGeminiAnalyzePdf({
+            rawText: pdfData.fullText,
+            fileName: file.name,
+            docType,
+            schoolConfig,
+            apiKey: geminiApiKey
+          });
+          setAiExtracted({
+            contestName: aiJson.contestName || file.name.replace(/\.pdf$/i, ""),
+            organizer: aiJson.organizer || "Ban tổ chức cuộc thi",
+            level: aiJson.level || "Cấp Thành phố",
+            grades: Array.isArray(aiJson.targetGrades) && aiJson.targetGrades.length > 0 ? aiJson.targetGrades : ["6", "7", "8", "9"],
+            format: aiJson.format || "Cá nhân & Theo đội",
+            registrationEnd: aiJson.registrationDeadlineISO || "2026-12-15",
+            preliminaryDate: aiJson.preliminaryDateISO || "2026-12-22",
+            finalDate: aiJson.finalDateISO || "2027-01-12",
+            thoiHan: aiJson.thoiHanSummary || `Hạn đăng ký: ${aiJson.registrationDeadlineISO || "15/12/2026"}`,
+            submissionRules: aiJson.submissionRules || "Theo hướng dẫn của giáo viên phụ trách",
+            milestones: aiJson.milestones || [],
+            studentArticle: aiJson.studentArticle || "",
+            summaryPages: pdfData.pages.map((p) => `Trang ${p.page}: ${p.text.slice(0, 320)}...`)
+          });
+          notify(`Gemini AI đã đọc xong ${pdfData.totalPages} trang PDF "${file.name}"!`);
+        } catch (err) {
+          console.error("Lỗi phân tích PDF qua Gemini:", err);
+          notify("Không gọi được Gemini API (kiểm tra kết nối mạng hoặc khóa API trong Cài đặt).", true);
+        } finally {
+          setIsAnalyzingPdf(false);
+        }
+      };
+
+      const loadSampleAiData = (sampleType) => {
+        setIsAnalyzingPdf(true);
+        setTimeout(() => {
+          if (sampleType === "THE_LE") {
+            setPdfFileName("The_le_Sang_tao_Thanh_thieu_nien_2026.pdf");
+            setAiExtracted({
+              contestName: "Cuộc thi Sáng tạo Thanh thiếu niên Nhi đồng lần thứ 22",
+              organizer: "Liên hiệp các Hội Khoa học & Kỹ thuật phối hợp Sở GD&ĐT",
+              level: "Cấp Thành phố",
+              grades: ["6", "7", "8", "9"],
+              format: "Cá nhân hoặc Nhóm tác giả (tối đa 5 thành viên liên lớp)",
+              registrationEnd: "2026-12-18",
+              preliminaryDate: "2027-01-12",
+              finalDate: "2027-02-05",
+              thoiHan: "Hạn đăng ký: 18/12/2026 · Chấm sơ khảo: 12/01/2027 · Chung kết: 05/02/2027",
+              submissionRules: "Nộp mô hình sản phẩm + Bản thuyết minh (.PDF/.DOCX) về Phòng Thiết bị trước 15/12/2026",
+              milestones: [
+                { name: "Hạn chót nhận hồ sơ đăng ký (BTC)", dateText: "18/12/2026", pageRef: "Trang 1" },
+                { name: "Vòng Sơ khảo & Chấm mô hình", dateText: "12/01/2027", pageRef: "Trang 2" },
+                { name: "Vòng Chung kết & Trao giải", dateText: "05/02/2027", pageRef: "Trang 3" }
+              ],
+              studentArticle: `Mở đăng ký Cuộc thi Sáng tạo Thanh thiếu niên Nhi đồng năm học ${schoolConfig.academicYear}.\n- Đối tượng: Học sinh khối 6, 7, 8, 9 (Cá nhân hoặc nhóm tối đa 5 thành viên).\n- Hạn đăng ký tại trường: Trước 15/12/2026 (Hạn BTC: 18/12/2026).\n- Liên hệ tư vấn đề tài: ${schoolConfig.contactPerson} - SĐT: ${schoolConfig.contactPhone}.`,
+              summaryPages: [
+                "Trang 1: Đối tượng dự thi là học sinh THCS (khối 6, 7, 8, 9). Hạn nhận hồ sơ BTC: 18/12/2026.",
+                "Trang 2: Lĩnh vực đồ dùng học tập, phần mềm tin học, sản phẩm thân thiện môi trường. Sơ khảo: 12/01/2027.",
+                "Trang 3: Chung kết và trao giải cấp Thành phố vào ngày 05/02/2027."
+              ]
+            });
+          } else {
+            setPdfFileName("Thong_bao_Lich_thi_Tin_hoc_tre_Cap_TP.pdf");
+            setAiExtracted({
+              contestName: "Thông báo Lịch thi chính thức Hội thi Tin học trẻ",
+              organizer: "Phòng Giáo dục và Đào tạo",
+              level: "Cấp Thành phố",
+              grades: ["6", "7", "8", "9"],
+              format: "Cá nhân (Bảng B) & Đội 2 thành viên (Bảng D2)",
+              registrationEnd: "2026-12-08",
+              preliminaryDate: "2026-12-20",
+              finalDate: "2027-01-15",
+              thoiHan: "Chốt danh sách: 08/12/2026 · Thi chính thức: 20/12/2026",
+              submissionRules: "Nộp mã nguồn nén .ZIP trước 17h00 ngày 18/12/2026",
+              milestones: [
+                { name: "Chốt danh sách dự thi cấp Thành phố", dateText: "08/12/2026", pageRef: "Trang 1" },
+                { name: "Thi lập trình trực tuyến chính thức", dateText: "08:00 ngày 20/12/2026", pageRef: "Trang 1" }
+              ],
+              studentArticle: `Thông báo lịch thi chính thức Hội thi Tin học trẻ:\n- Chốt danh sách: 08/12/2026.\n- Ngày thi chính thức: 08:00 ngày 20/12/2026.\n- Phụ trách: ${schoolConfig.contactPerson} (${schoolConfig.contactPhone}).`,
+              summaryPages: ["Trang 1: Lịch thi chính thức ngày 20/12/2026 tại điểm thi tập trung."]
+            });
+          }
+          setIsAnalyzingPdf(false);
+          notify("AI đã trích xuất thông tin cơ bản & các mốc thời gian từ PDF!");
+        }, 450);
+      };
+
+      const publishAiContest = async () => {
+        if (!aiExtracted) return;
+        const newContest = {
+          id: `contest_ai_${Date.now()}`,
+          title: aiExtracted.contestName,
+          academicYear: schoolConfig.academicYear,
+          organizer: aiExtracted.organizer,
+          level: aiExtracted.level,
+          field: "Khoa học & Sáng tạo",
+          grades: aiExtracted.grades,
+          format: aiExtracted.format,
+          publishStatus: "PUBLISHED",
+          workflowStatus: "OPEN_REGISTRATION",
+          registrationEnd: aiExtracted.registrationEnd,
+          schoolInternalDeadline: aiExtracted.registrationEnd,
+          reportDeadline: aiExtracted.finalDate || aiExtracted.registrationEnd,
+          reportSubmitted: false,
+          thoiHan: aiExtracted.thoiHan,
+          location: schoolConfig.schoolName,
+          contactInfo: `${schoolConfig.contactPerson} - SĐT: ${schoolConfig.contactPhone}`,
+          description: aiExtracted.submissionRules,
+          studentArticle: aiExtracted.studentArticle,
+          pdfRule: {
+            version: "v1.0",
+            fileName: pdfFileName || "The_le_AI.pdf",
+            updatedAt: new Date().toISOString().slice(0, 10),
+            summaryPages: aiExtracted.summaryPages
+          },
+          rounds: aiExtracted.milestones.map((m, idx) => ({
+            id: `r_ai_${Date.now()}_${idx}`,
+            name: m.name,
+            date: idx === 0 ? aiExtracted.registrationEnd : idx === 1 ? aiExtracted.preliminaryDate : aiExtracted.finalDate,
+            time: m.dateText,
+            location: schoolConfig.schoolName,
+            pic: `${schoolConfig.contactPerson} (${schoolConfig.contactPhone})`
+          }))
+        };
+
+        const newAnn = {
+          id: `ann_${Date.now()}`,
+          title: `[MỞ ĐĂNG KÝ] ${aiExtracted.contestName}`,
+          contestId: newContest.id,
+          isPinned: true,
+          isScheduleChange: false,
+          oldSchedule: "",
+          newSchedule: "",
+          updatedAt: new Date().toISOString().slice(0, 10),
+          attachmentName: pdfFileName || "The_le.pdf",
+          content: aiExtracted.studentArticle
+        };
+
+        setContests((prev) => [newContest, ...prev]);
+        setAnnouncements((prev) => [newAnn, ...prev]);
+        await syncDoc("contests", newContest.id, newContest);
+        await syncDoc("announcements", newAnn.id, newAnn);
+        setAiExtracted(null);
+        notify("Đã đăng công bố cuộc thi, lịch thi và thông báo từ dữ liệu AI!");
+      };
+
+      // Số liệu thống kê biểu đồ theo lớp
+      const classStats = useMemo(() => {
+        return classes.map((cl) => {
+          const regSet = new Set();
+          const attSet = new Set();
+          registrations.forEach((r) => {
+            r.members.filter((m) => m.className === cl.name).forEach((m) => {
+              if (["APPROVED", "ATTENDED"].includes(r.status)) regSet.add(m.fullName);
+              if (r.status === "ATTENDED") attSet.add(m.fullName);
+            });
+          });
+          const prizeSet = new Set();
+          results.filter((r) => r.isPublished).forEach((r) => {
+            r.members.filter((m) => m.className === cl.name).forEach((m) => prizeSet.add(m.fullName));
+          });
+          return {
+            name: cl.name,
+            studentCount: cl.studentCount,
+            regCount: regSet.size,
+            attCount: attSet.size,
+            prizeCount: prizeSet.size
+          };
+        });
+      }, [classes, registrations, results]);
+
+      const contestAwardRates = useMemo(() => {
+        return contests.map((c) => {
+          const approvedRegs = registrations.filter((r) => r.contestId === c.id && ["APPROVED", "ATTENDED"].includes(r.status)).length;
+          const pubAwards = results.filter((r) => r.contestId === c.id && r.isPublished).length;
+          const rate = approvedRegs > 0 ? Math.round((pubAwards / approvedRegs) * 100) : 0;
+          return { id: c.id, title: c.title, approvedRegs, pubAwards, rate };
+        });
+      }, [contests, registrations, results]);
+
+      const maxBar = Math.max(4, ...classStats.map((s) => Math.max(s.regCount, s.attCount, s.prizeCount)));
+
+      return (
+        <div className="space-y-6">
+          {/* Cảnh báo nhắc lịch nộp báo cáo lên cấp trên trước 3 ngày */}
+          {dueReports.length > 0 && (
+            <div className="bg-rose-50 border-2 border-rose-400 rounded-2xl p-4 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-extrabold text-rose-900 flex items-center gap-2">
+                  <span>🔔 NHẮC LỊCH NỘP BÁO CÁO LÊN CẤP TRÊN (Trước 3 ngày)</span>
+                  <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-xs">{dueReports.length}</span>
+                </h3>
+              </div>
+              <div className="space-y-2">
+                {dueReports.map(({ contest, info }) => (
+                  <div key={contest.id} className="bg-white p-3 rounded-xl border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <div>
+                      <div className="font-extrabold text-slate-900">{contest.title}</div>
+                      <div className="text-rose-700 font-bold mt-0.5">{info.label}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleMarkReportSubmitted(contest)}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shrink-0"
+                    >
+                      ✓ Đánh dấu đã nộp báo cáo
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Header Quản trị & Các tab */}
+          <div className="bg-blue-950 text-white p-5 rounded-3xl flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-extrabold">Bảng điều khiển Quản trị & AI</h2>
+              <p className="text-xs text-blue-200">Phụ trách: {schoolConfig.contactPerson} ({schoolConfig.contactPhone})</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-xs">
+              {[
+                { id: "AI_PDF", label: "AI Đọc PDF Thể lệ / Thông báo" },
+                { id: "CONTESTS", label: "Quản lý cuộc thi & Báo cáo" },
+                { id: "REGS", label: `Duyệt Đăng ký (${registrations.filter((r) => r.status === "PENDING").length})` },
+                { id: "RESULTS_HOF", label: "Kết quả & Bảng vàng" },
+                { id: "STATS", label: "Biểu đồ thống kê" },
+                { id: "SETTINGS", label: "Cài đặt trường & API" }
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setAdminTab(t.id)}
+                  className={`px-3.5 py-2 rounded-xl font-bold ${adminTab === t.id ? "bg-amber-400 text-blue-950" : "bg-blue-900 text-blue-100 hover:bg-blue-800"}`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {adminTab === "AI_PDF" && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="text-lg font-extrabold text-slate-900">Nhúng Gemini AI đọc file Thể lệ / Thông báo PDF</h3>
+                  <p className="text-xs text-slate-500">Tải file PDF từ máy tính để AI bóc tách thông tin cơ bản, lọc các mốc thời gian và soạn bài thông báo</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <select value={docType} onChange={(e) => setDocType(e.target.value)} className="p-2.5 rounded-xl border border-slate-300 font-bold">
+                    <option value="THE_LE">Loại: Thể lệ cuộc thi (.PDF)</option>
+                    <option value="THONG_BAO">Loại: Thông báo lịch thi (.PDF)</option>
+                  </select>
+                  <label className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer">
+                    + Tải file PDF lên
+                    <input type="file" accept=".pdf" onChange={handlePdfUpload} className="hidden" />
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="font-bold text-slate-600">Hoặc thử nhanh AI với mẫu có sẵn:</span>
+                <button type="button" onClick={() => loadSampleAiData("THE_LE")} className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:border-blue-500 font-bold text-blue-800">
+                  Mẫu PDF Thể lệ Sáng tạo TTN
+                </button>
+                <button type="button" onClick={() => loadSampleAiData("THONG_BAO")} className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:border-blue-500 font-bold text-blue-800">
+                  Mẫu PDF Thông báo Lịch thi Tin học trẻ
+                </button>
+              </div>
+
+              {isAnalyzingPdf && (
+                <div className="p-4 rounded-xl bg-blue-50 text-blue-800 text-xs font-bold">
+                  AI Gemini đang đọc văn bản PDF và trích xuất các mốc thời gian...
+                </div>
+              )}
+
+              {aiExtracted && (
+                <div className="space-y-4 border-t border-slate-200 pt-4 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Tên cuộc thi (AI trích xuất)</label>
+                      <input type="text" value={aiExtracted.contestName} onChange={(e) => setAiExtracted({ ...aiExtracted, contestName: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 font-bold" />
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Đơn vị tổ chức</label>
+                      <input type="text" value={aiExtracted.organizer} onChange={(e) => setAiExtracted({ ...aiExtracted, organizer: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300" />
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Hình thức thi</label>
+                      <input type="text" value={aiExtracted.format} onChange={(e) => setAiExtracted({ ...aiExtracted, format: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300" />
+                    </div>
+                    <div>
+                      <label className="font-bold text-amber-800 block mb-1">Tóm tắt các mốc thời gian</label>
+                      <input type="text" value={aiExtracted.thoiHan} onChange={(e) => setAiExtracted({ ...aiExtracted, thoiHan: e.target.value })} className="w-full p-2.5 rounded-xl border border-amber-300 bg-amber-50/50 font-bold" />
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Hạn đăng ký (Chuẩn hóa)</label>
+                      <input type="date" value={aiExtracted.registrationEnd} onChange={(e) => setAiExtracted({ ...aiExtracted, registrationEnd: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 font-bold" />
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Ngày thi chính thức / Sơ loại</label>
+                      <input type="date" value={aiExtracted.preliminaryDate} onChange={(e) => setAiExtracted({ ...aiExtracted, preliminaryDate: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 font-bold" />
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2">
+                    <div className="font-extrabold text-blue-900">Các mốc thời gian AI lọc được từ tài liệu:</div>
+                    {aiExtracted.milestones.map((m, idx) => (
+                      <div key={idx} className="flex flex-wrap items-center justify-between bg-white p-2 rounded-lg border border-blue-100">
+                        <span className="font-bold text-slate-800">{m.name}</span>
+                        <span className="text-blue-700 font-extrabold">{m.dateText} ({m.pageRef})</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Bài thông báo AI soạn cho học sinh (Có thể chỉnh sửa):</label>
+                    <textarea rows={4} value={aiExtracted.studentArticle} onChange={(e) => setAiExtracted({ ...aiExtracted, studentArticle: e.target.value })} className="w-full p-3 rounded-xl border border-slate-300" />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button type="button" onClick={publishAiContest} className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm">
+                      ✓ Duyệt & Đăng công bố lên Cổng cuộc thi
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {adminTab === "CONTESTS" && (
+            <div className="space-y-5">
+              {/* Biểu mẫu Thêm mới / Sửa Cuộc thi */}
+              <form onSubmit={handleSaveContestForm} className={`p-5 rounded-2xl border space-y-4 text-xs ${editingContestId ? "bg-amber-50/70 border-amber-300" : "bg-white border-slate-200"}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-sm text-slate-900">
+                    {editingContestId ? "✏️ Đang chỉnh sửa thông tin cuộc thi" : "+ Thêm cuộc thi mới"}
+                  </h3>
+                  {editingContestId && (
+                    <button type="button" onClick={resetContestForm} className="px-3 py-1 rounded-lg bg-slate-200 text-slate-700 font-bold">
+                      Hủy sửa
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block font-bold text-slate-700 mb-1">Tên cuộc thi *</label>
+                    <input type="text" required value={contestForm.title} onChange={(e) => setContestForm({ ...contestForm, title: e.target.value })} placeholder="VD: Olympic Toán học THCS" className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Đơn vị tổ chức</label>
+                    <input type="text" value={contestForm.organizer} onChange={(e) => setContestForm({ ...contestForm, organizer: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Cấp tổ chức</label>
+                    <select value={contestForm.level} onChange={(e) => setContestForm({ ...contestForm, level: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                      <option value="Cấp Trường">Cấp Trường</option>
+                      <option value="Cấp Thành phố">Cấp Thành phố</option>
+                      <option value="Cấp Tỉnh">Cấp Tỉnh</option>
+                      <option value="Cấp Quốc gia">Cấp Quốc gia</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Thời hạn hiển thị</label>
+                    <input type="text" value={contestForm.thoiHan} onChange={(e) => setContestForm({ ...contestForm, thoiHan: e.target.value })} placeholder="Hạn đăng ký: 20/12/2026" className="w-full p-2.5 rounded-xl border border-amber-300 bg-white font-semibold" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Hạn chót đăng ký</label>
+                    <input type="date" value={contestForm.registrationEnd} onChange={(e) => setContestForm({ ...contestForm, registrationEnd: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-rose-700 mb-1">Hạn nộp báo cáo cấp trên (Nhắc trước 3 ngày)</label>
+                    <input type="date" value={contestForm.reportDeadline} onChange={(e) => setContestForm({ ...contestForm, reportDeadline: e.target.value })} className="w-full p-2.5 rounded-xl border border-rose-300 bg-rose-50/40 font-bold" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Khối lớp (cách nhau dấu phẩy)</label>
+                    <input type="text" value={contestForm.gradesText} onChange={(e) => setContestForm({ ...contestForm, gradesText: e.target.value })} placeholder="6, 7, 8, 9" className="w-full p-2.5 rounded-xl border border-slate-300 bg-white" />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <label className="block font-bold text-slate-700 mb-1">Mô tả / Nội dung tóm tắt</label>
+                    <input type="text" value={contestForm.description} onChange={(e) => setContestForm({ ...contestForm, description: e.target.value })} placeholder="Mô tả ngắn gọn về cuộc thi..." className="w-full p-2.5 rounded-xl border border-slate-300 bg-white" />
+                  </div>
+                  <div className="flex items-end">
+                    <button type="submit" className={`w-full p-2.5 rounded-xl text-white font-extrabold ${editingContestId ? "bg-amber-600 hover:bg-amber-700" : "bg-blue-600 hover:bg-blue-700"}`}>
+                      {editingContestId ? "Lưu cập nhật cuộc thi" : "+ Thêm & Công bố"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Danh sách cuộc thi (Có tiến độ, nhắc nộp báo cáo, Sửa & Xóa) */}
+              <div className="space-y-3">
+                {sortContestsOngoingFirst(contests).map((c) => {
+                  const rep = getReportReminderInfo(c);
+                  return (
+                    <div key={c.id} className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs">
+                      <div className="space-y-1.5 flex-1">
+                        <div className="font-extrabold text-sm text-slate-900">{c.title}</div>
+                        <div className="text-slate-600">{c.organizer} ({c.level}) · Khối {c.grades.join(", ")}</div>
+                        <div className="text-amber-800 font-bold">⏱ {c.thoiHan}</div>
+                        {rep && (
+                          <div className="pt-1 flex flex-wrap items-center gap-2">
+                            <span className={`px-2.5 py-1 rounded-lg font-bold ${
+                              rep.status === "COMPLETED"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : rep.status === "OVERDUE" || rep.status === "DUE_SOON"
+                                  ? "bg-rose-100 text-rose-800 border border-rose-300"
+                                  : "bg-slate-100 text-slate-700"
+                            }`}>
+                              {rep.status === "COMPLETED" ? `✓ ${rep.label}` : `📋 ${rep.label}`}
+                            </span>
+                            {rep.status !== "COMPLETED" && (
+                              <button
+                                type="button"
+                                onClick={() => handleMarkReportSubmitted(c)}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                              >
+                                Chọn hoàn thành nộp báo cáo
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <select
+                          value={c.workflowStatus}
+                          onChange={async (e) => {
+                            const updated = { ...c, workflowStatus: e.target.value };
+                            setContests((prev) => prev.map((item) => (item.id === c.id ? updated : item)));
+                            await syncDoc("contests", c.id, updated);
+                            notify("Đã cập nhật tiến độ!");
+                          }}
+                          className="p-2 rounded-xl border border-slate-300 font-bold bg-white"
+                        >
+                          {Object.entries(WORKFLOW_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                        </select>
+                        <button type="button" onClick={() => onOpenPdf(c)} className="px-3 py-2 rounded-xl border border-slate-300 font-bold hover:bg-slate-50">
+                          Xem PDF
+                        </button>
+                        <button type="button" onClick={() => handleEditContestClick(c)} className="px-3 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold">
+                          Sửa
+                        </button>
+                        <button type="button" onClick={() => handleDeleteContest(c)} className="px-3 py-2 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold">
+                          Xóa
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {adminTab === "REGS" && (
+            <div className="space-y-4">
+              {/* Thanh lọc theo cuộc thi */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2.5 flex-1">
+                  <label className="font-extrabold text-slate-700 shrink-0">Lọc theo cuộc thi:</label>
+                  <select
+                    value={regFilterContest}
+                    onChange={(e) => setRegFilterContest(e.target.value)}
+                    className="p-2.5 rounded-xl border border-slate-300 bg-white font-bold text-slate-900 min-w-[240px] flex-1 sm:flex-initial"
+                  >
+                    <option value="ALL">Tất cả cuộc thi ({registrations.length} hồ sơ)</option>
+                    {contests.map((c) => {
+                      const cnt = registrations.filter((r) => r.contestId === c.id).length;
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.title} ({cnt} hồ sơ)
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className="text-slate-500 font-semibold">
+                  Đang hiển thị: <strong className="text-blue-700">{filteredAdminRegistrations.length}</strong> hồ sơ · Lưu ý: Chọn <strong className="text-rose-600">Từ chối</strong> sẽ xóa trực tiếp thí sinh.
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 font-bold">
+                    <tr>
+                      <th className="p-3">Thí sinh / Đội</th>
+                      <th className="p-3">Lớp</th>
+                      <th className="p-3">Cuộc thi</th>
+                      <th className="p-3">SĐT liên hệ</th>
+                      <th className="p-3">Trạng thái duyệt</th>
+                      <th className="p-3">Thao tác nhanh</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredAdminRegistrations.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-slate-500">
+                          Chưa có hồ sơ đăng ký nào thuộc cuộc thi này.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAdminRegistrations.map((r) => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-bold">
+                            {r.type === "TEAM" ? `[Đội] ${r.teamName} (${r.members.map((m) => m.fullName).join(", ")})` : r.members[0]?.fullName}
+                          </td>
+                          <td className="p-3 font-bold text-blue-700">{[...new Set(r.members.map((m) => m.className))].join(" & ")}</td>
+                          <td className="p-3">{contests.find((c) => c.id === r.contestId)?.title}</td>
+                          <td className="p-3">{r.members[0]?.phone || "—"}</td>
+                          <td className="p-3">
+                            <select
+                              value={r.status}
+                              onChange={(e) => handleRegistrationStatusChange(r, e.target.value)}
+                              className={`p-1.5 rounded-lg border font-bold ${
+                                r.status === "ATTENDED"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : r.status === "APPROVED"
+                                    ? "bg-blue-50 text-blue-700 border-blue-200"
+                                    : "bg-amber-50 text-amber-800 border-amber-200"
+                              }`}
+                            >
+                              <option value="PENDING">Chờ duyệt</option>
+                              <option value="APPROVED">Đã duyệt</option>
+                              <option value="ATTENDED">Đã dự thi</option>
+                              <option value="REJECTED">Từ chối (Xóa luôn)</option>
+                            </select>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5">
+                              {r.status === "PENDING" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRegistrationStatusChange(r, "APPROVED")}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                                >
+                                  ✓ Duyệt
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRegistrationStatusChange(r, "REJECTED")}
+                                className="px-2.5 py-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold"
+                              >
+                                Từ chối & Xóa
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {adminTab === "RESULTS_HOF" && (
+            <div className="space-y-6">
+              {/* Biểu mẫu Thêm / Sửa Kết quả & Bảng vàng vinh danh (Có đăng ảnh học sinh) */}
+              <form onSubmit={handleSaveResultHof} className={`p-5 rounded-2xl border space-y-4 text-xs ${editingResultId ? "bg-amber-50/70 border-amber-300" : "bg-white border-slate-200"}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-sm text-slate-900">
+                    {editingResultId ? "✏️ Sửa Kết quả & Thông tin Bảng vàng vinh danh" : "+ Đăng Kết quả & Thêm học sinh lên Bảng vàng vinh danh"}
+                  </h3>
+                  {editingResultId && (
+                    <button type="button" onClick={resetHofForm} className="px-3 py-1 rounded-lg bg-slate-200 text-slate-700 font-bold">
+                      Hủy sửa
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Cuộc thi *</label>
+                    <select value={hofForm.contestId} onChange={(e) => setHofForm({ ...hofForm, contestId: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                      {contests.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Hình thức</label>
+                    <select value={hofForm.type} onChange={(e) => setHofForm({ ...hofForm, type: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                      <option value="INDIVIDUAL">Cá nhân</option>
+                      <option value="TEAM">Tập thể / Đội</option>
+                    </select>
+                  </div>
+                  {hofForm.type === "TEAM" && (
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Tên đội thi *</label>
+                      <input type="text" required value={hofForm.teamName} onChange={(e) => setHofForm({ ...hofForm, teamName: e.target.value })} placeholder="VD: Đội Robot Xanh" className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold" />
+                    </div>
+                  )}
+                  <div className={hofForm.type === "TEAM" ? "" : "sm:col-span-2"}>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      {hofForm.type === "TEAM" ? "Danh sách thành viên (cách nhau dấu phẩy) *" : "Họ và tên học sinh *"}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={hofForm.fullName}
+                      onChange={(e) => setHofForm({ ...hofForm, fullName: e.target.value })}
+                      placeholder={hofForm.type === "TEAM" ? "VD: Vũ Đức Anh, Đặng Khánh Linh" : "VD: Nguyễn Minh Khôi"}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Lớp</label>
+                    <select value={hofForm.className} onChange={(e) => setHofForm({ ...hofForm, className: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                      {classes.map((cl) => <option key={cl.id} value={cl.name}>Lớp {cl.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Giải thưởng</label>
+                    <select value={hofForm.prize} onChange={(e) => setHofForm({ ...hofForm, prize: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                      <option value="Nhất">Giải Nhất</option>
+                      <option value="Nhì">Giải Nhì</option>
+                      <option value="Ba">Giải Ba</option>
+                      <option value="Khuyến khích">Giải Khuyến khích</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Điểm số</label>
+                    <input type="number" value={hofForm.score} onChange={(e) => setHofForm({ ...hofForm, score: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold" />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Ghi chú tuyên dương</label>
+                    <input type="text" value={hofForm.notes} onChange={(e) => setHofForm({ ...hofForm, notes: e.target.value })} placeholder="VD: Thủ khoa khối 8" className="w-full p-2.5 rounded-xl border border-slate-300 bg-white" />
+                  </div>
+
+                  {/* Tải ảnh học sinh lên Bảng vàng */}
+                  <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center gap-3 bg-blue-50/60 p-3 rounded-xl border border-blue-200">
+                    {hofForm.photoUrl ? (
+                      <img src={hofForm.photoUrl} alt="Preview" className="w-12 h-12 rounded-xl object-cover border border-amber-400" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-white border border-slate-300 flex items-center justify-center text-[10px] text-slate-400 font-bold text-center">
+                        Chưa có ảnh
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <div className="font-bold text-blue-900">Ảnh chân dung học sinh hiển thị trên Bảng vàng:</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer">
+                          📷 Chọn ảnh học sinh (JPG/PNG)
+                          <input type="file" accept="image/*" onChange={handleStudentPhotoUpload} className="hidden" />
+                        </label>
+                        {hofForm.photoUrl && (
+                          <button type="button" onClick={() => setHofForm({ ...hofForm, photoUrl: "" })} className="px-2.5 py-1.5 rounded-lg bg-rose-100 text-rose-700 font-bold">
+                            Gỡ ảnh
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col justify-between gap-2">
+                    <label className="flex items-center gap-2 font-bold text-slate-700 cursor-pointer pt-1">
+                      <input type="checkbox" checked={hofForm.isPublished} onChange={(e) => setHofForm({ ...hofForm, isPublished: e.target.checked })} className="w-4 h-4" />
+                      <span>Công bố công khai ngay</span>
+                    </label>
+                    <button type="submit" className={`w-full p-2.5 rounded-xl text-white font-extrabold ${editingResultId ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}`}>
+                      {editingResultId ? "Lưu cập nhật" : "+ Đăng lên Kết quả & Bảng vàng"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Danh sách Kết quả & Bảng vàng hiện có (Sửa & Xóa trực tiếp) */}
+              <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 font-bold">
+                    <tr>
+                      <th className="p-3">Ảnh</th>
+                      <th className="p-3">Học sinh / Đội</th>
+                      <th className="p-3">Lớp</th>
+                      <th className="p-3">Cuộc thi</th>
+                      <th className="p-3">Giải & Điểm</th>
+                      <th className="p-3">Trạng thái</th>
+                      <th className="p-3">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {results.map((r) => {
+                      const photo = r.members.find((m) => m.photoUrl)?.photoUrl;
+                      return (
+                        <tr key={r.id}>
+                          <td className="p-3">
+                            {photo ? (
+                              <img src={photo} alt="HS" className="w-10 h-10 rounded-xl object-cover border border-amber-300" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 font-bold flex items-center justify-center text-[10px]">
+                                Không ảnh
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 font-bold">
+                            {r.type === "TEAM" ? `[Đội] ${r.teamName} (${r.members.map((m) => m.fullName).join(", ")})` : r.members[0]?.fullName}
+                            {r.notes && <div className="text-[11px] font-normal text-slate-500">{r.notes}</div>}
+                          </td>
+                          <td className="p-3 font-bold text-blue-700">{[...new Set(r.members.map((m) => m.className))].join(" & ")}</td>
+                          <td className="p-3">{contests.find((c) => c.id === r.contestId)?.title}</td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-950 font-bold">Giải {r.prize}</span> · <strong>{r.score}đ</strong>
+                          </td>
+                          <td className="p-3">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const updated = { ...r, isPublished: !r.isPublished };
+                                setResults((prev) => prev.map((item) => (item.id === r.id ? updated : item)));
+                                await syncDoc("results", r.id, updated);
+                                notify(updated.isPublished ? "Đã công bố lên Bảng vàng!" : "Đã tạm ẩn khỏi Bảng vàng.");
+                              }}
+                              className={`px-2.5 py-1 rounded-lg font-bold ${r.isPublished ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}
+                            >
+                              {r.isPublished ? "Đang công bố" : "Đang ẩn"}
+                            </button>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5">
+                              <button type="button" onClick={() => handleEditResultClick(r)} className="px-2.5 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold">
+                                Sửa
+                              </button>
+                              <button type="button" onClick={() => handleDeleteResult(r)} className="px-2.5 py-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold">
+                                Xóa
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {adminTab === "STATS" && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-extrabold text-sm text-slate-900">Biểu đồ thống kê cuộc thi theo lớp</h3>
+                    <p className="text-[11px] text-slate-500">Số học sinh đăng ký · Số học sinh dự thi · Số đạt giải</p>
+                  </div>
+                  <div className="flex gap-3 text-[11px] font-bold">
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-blue-500 rounded-xs"></span> Đăng ký</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-emerald-500 rounded-xs"></span> Dự thi</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-400 rounded-xs"></span> Đạt giải</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-5 gap-3 pt-4 items-end min-h-[190px] border-b border-slate-100 pb-3">
+                  {classStats.map((s) => (
+                    <div key={s.name} className="flex flex-col items-center gap-2">
+                      <div className="w-full h-32 flex items-end justify-center gap-1">
+                        <div className="flex-1 flex flex-col items-center">
+                          <span className="text-[10px] font-bold text-blue-700 mb-1">{s.regCount}</span>
+                          <div style={{ height: `${Math.max((s.regCount / maxBar) * 100, 10)}px` }} className="w-full bg-blue-500 rounded-t-md" />
+                        </div>
+                        <div className="flex-1 flex flex-col items-center">
+                          <span className="text-[10px] font-bold text-emerald-700 mb-1">{s.attCount}</span>
+                          <div style={{ height: `${Math.max((s.attCount / maxBar) * 100, 10)}px` }} className="w-full bg-emerald-500 rounded-t-md" />
+                        </div>
+                        <div className="flex-1 flex flex-col items-center">
+                          <span className="text-[10px] font-bold text-amber-700 mb-1">{s.prizeCount}</span>
+                          <div style={{ height: `${Math.max((s.prizeCount / maxBar) * 100, 10)}px` }} className="w-full bg-amber-400 rounded-t-md" />
+                        </div>
+                      </div>
+                      <span className="text-xs font-extrabold">Lớp {s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+                <div>
+                  <h3 className="font-extrabold text-sm text-slate-900">Tỷ lệ đạt giải / Số lượng đăng ký từng cuộc thi</h3>
+                  <p className="text-[11px] text-slate-500">Số giải đạt được chia tổng lượt đăng ký đã duyệt</p>
+                </div>
+                <div className="space-y-3">
+                  {contestAwardRates.map((ca) => (
+                    <div key={ca.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+                      <div className="flex justify-between gap-2">
+                        <span className="font-bold line-clamp-1">{ca.title}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-950 font-black shrink-0">{ca.rate}%</span>
+                      </div>
+                      <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div style={{ width: `${Math.min(ca.rate, 100)}%` }} className="h-full bg-amber-400 rounded-full" />
+                      </div>
+                      <div className="text-[11px] text-slate-600">Đạt giải: <strong>{ca.pubAwards}/{ca.approvedRegs}</strong> lượt đăng ký</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {adminTab === "SETTINGS" && (
+            <div className="space-y-6 text-xs">
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-5">
+                <h3 className="font-extrabold text-base text-slate-900">Cài đặt thông tin trường, API Key Gemini & Sao lưu dữ liệu</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="font-bold block mb-1">Tên trường THCS</label>
+                    <input type="text" value={schoolConfig.schoolName} onChange={(e) => setSchoolConfig({ ...schoolConfig, schoolName: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 font-bold" />
+                  </div>
+                  <div>
+                    <label className="font-bold block mb-1">Năm học</label>
+                    <input type="text" value={schoolConfig.academicYear} onChange={(e) => setSchoolConfig({ ...schoolConfig, academicYear: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 font-bold" />
+                  </div>
+                  <div>
+                    <label className="font-bold block mb-1">Cán bộ phụ trách</label>
+                    <input type="text" value={schoolConfig.contactPerson} onChange={(e) => setSchoolConfig({ ...schoolConfig, contactPerson: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 font-bold" />
+                  </div>
+                  <div>
+                    <label className="font-bold block mb-1">Số điện thoại liên hệ</label>
+                    <input type="text" value={schoolConfig.contactPhone} onChange={(e) => setSchoolConfig({ ...schoolConfig, contactPhone: e.target.value })} className="w-full p-2.5 rounded-xl border border-slate-300 font-bold" />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-4">
+                    <label className="font-bold text-blue-800 block mb-1">Gemini API Key (Dùng khi chạy web thật trên GitHub / Vercel / Netlify)</label>
+                    <input
+                      type="password"
+                      value={geminiApiKey}
+                      onChange={(e) => setGeminiApiKey(e.target.value)}
+                      placeholder="Dán khóa AIzaSy... của Google AI Studio vào đây (nếu chạy ngoài môi trường xem trước)"
+                      className="w-full p-2.5 rounded-xl border border-blue-300 bg-blue-50/40 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-slate-600">
+                    <strong>Đóng gói & Sao lưu dữ liệu:</strong> Xuất toàn bộ dữ liệu cuộc thi, thí sinh, kết quả Bảng vàng ra tệp JSON để lưu trữ hoặc chuyển sang máy tính khác.
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const backup = { schoolConfig, classes, contests, registrations, results, announcements, exportedAt: new Date().toISOString() };
+                        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `Sao_luu_Cong_cuoc_thi_${schoolConfig.academicYear}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        notify("Đã tải xuống gói sao lưu dữ liệu (.json)!");
+                      }}
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                    >
+                      Xuất gói sao lưu (.json)
+                    </button>
+                    <label className="px-4 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 font-bold text-slate-700 cursor-pointer">
+                      Khôi phục từ file (.json)
+                      <input
+                        type="file"
+                        accept=".json"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            try {
+                              const data = JSON.parse(ev.target.result);
+                              if (data.schoolConfig) setSchoolConfig(data.schoolConfig);
+                              if (data.classes) setClasses(data.classes);
+                              if (data.contests) setContests(data.contests);
+                              if (data.registrations) setRegistrations(data.registrations);
+                              if (data.results) setResults(data.results);
+                              if (data.announcements) setAnnouncements(data.announcements);
+                              notify("Đã khôi phục toàn bộ dữ liệu từ bản sao lưu!");
+                            } catch (err) {
+                              notify("Tệp sao lưu không hợp lệ!", true);
+                            }
+                          };
+                          reader.readAsText(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quản lý Danh sách Lớp học: Tạo lớp mới, Sửa tên lớp, Sĩ số & Xóa lớp */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-extrabold text-base text-slate-900">Quản lý danh sách lớp học ({classes.length} lớp)</h3>
+                    <p className="text-slate-500">Thêm lớp mới, chỉnh sửa tên lớp, sĩ số hoặc giáo viên chủ nhiệm cho năm học {schoolConfig.academicYear}</p>
+                  </div>
+                  {editingClassId && (
+                    <button type="button" onClick={resetClassForm} className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-700 font-bold">
+                      Hủy sửa lớp
+                    </button>
+                  )}
+                </div>
+
+                <form onSubmit={handleSaveClassForm} className={`p-4 rounded-xl border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 ${editingClassId ? "bg-amber-50/70 border-amber-300" : "bg-slate-50 border-slate-200"}`}>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Tên lớp *</label>
+                    <input
+                      type="text"
+                      required
+                      value={classForm.name}
+                      onChange={(e) => setClassForm({ ...classForm, name: e.target.value })}
+                      placeholder="VD: 6B, 8C..."
+                      className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Khối lớp</label>
+                    <select
+                      value={classForm.grade}
+                      onChange={(e) => setClassForm({ ...classForm, grade: e.target.value })}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold"
+                    >
+                      {schoolConfig.grades.map((g) => (
+                        <option key={g} value={g}>Khối {g}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Sĩ số học sinh</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={classForm.studentCount}
+                      onChange={(e) => setClassForm({ ...classForm, studentCount: e.target.value })}
+                      placeholder="VD: 40"
+                      className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Giáo viên chủ nhiệm</label>
+                    <input
+                      type="text"
+                      value={classForm.homeroomTeacher}
+                      onChange={(e) => setClassForm({ ...classForm, homeroomTeacher: e.target.value })}
+                      placeholder="VD: Cô Nguyễn Thị Mai"
+                      className="w-full p-2.5 rounded-xl border border-slate-300 bg-white"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      className={`w-full p-2.5 rounded-xl text-white font-extrabold ${editingClassId ? "bg-amber-600 hover:bg-amber-700" : "bg-blue-600 hover:bg-blue-700"}`}
+                    >
+                      {editingClassId ? "Lưu sửa lớp" : "+ Tạo lớp mới"}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-700">
+                      <tr>
+                        <th className="p-3">Tên lớp</th>
+                        <th className="p-3">Khối</th>
+                        <th className="p-3">Sĩ số</th>
+                        <th className="p-3">Giáo viên chủ nhiệm</th>
+                        <th className="p-3">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {classes.map((cl) => (
+                        <tr key={cl.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-extrabold text-blue-800">Lớp {cl.name}</td>
+                          <td className="p-3 font-semibold">Khối {cl.grade}</td>
+                          <td className="p-3 font-bold">{cl.studentCount || 0} học sinh</td>
+                          <td className="p-3 text-slate-600">{cl.homeroomTeacher || "Chưa phân công"}</td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleEditClassClick(cl)}
+                                className="px-2.5 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold"
+                              >
+                                Sửa
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteClass(cl)}
+                                className="px-2.5 py-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold"
+                              >
+                                Xóa
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
